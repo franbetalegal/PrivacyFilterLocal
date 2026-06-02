@@ -279,9 +279,19 @@ def redact_text(text):
     except Exception as e:
         return text, f"Error: {e}"
 
+def _download_hint(out_path):
+    """Return a Gradio update that hints when the redacted file is ready."""
+    if out_path is None:
+        return gr.update(visible=False)
+    return gr.update(
+        value="Click the file above to download it.",
+        visible=True,
+    )
+
+
 def redact_file(file, progress=gr.Progress()):
     if file is None:
-        return "_Upload a file._", None
+        return "_Upload a file._", None, gr.update(visible=False)
     try:
         progress((0, 5), desc="Loading model...")
         model = get_model()
@@ -292,11 +302,11 @@ def redact_file(file, progress=gr.Progress()):
         if ext == ".pdf":
             text = extract_text_from_pdf(str(path))
             if text is None:
-                return "**Error** reading PDF. Install: `pip install PyMuPDF`", None
+                return "**Error** reading PDF. Install: `pip install PyMuPDF`", None, gr.update(visible=False)
         elif ext == ".docx":
             text = extract_text_from_docx(str(path))
             if text is None:
-                return "**Error** reading DOCX. Check the console.", None
+                return "**Error** reading DOCX. Check the console.", None, gr.update(visible=False)
         else:
             text = path.read_text(encoding="utf-8", errors="replace")
 
@@ -332,9 +342,9 @@ def redact_file(file, progress=gr.Progress()):
         elif ext == ".docx" and spans:
             out_path = redact_docx(str(path), spans)
         progress((5, 5), desc="Done")
-        return legend, out_path
+        return legend, out_path, _download_hint(out_path)
     except Exception as e:
-        return f"**Error:** {e}", None
+        return f"**Error:** {e}", None, gr.update(visible=False)
 
 
 # ============================================================
@@ -589,7 +599,12 @@ def create_ui():
             fbtn = gr.Button("Process File", variant="primary")
             flegend = gr.Markdown()
             fpdf = gr.File(label="Redacted file (PDF/DOCX)", visible=True)
-            fbtn.click(fn=redact_file, inputs=finp, outputs=[flegend, fpdf])
+            fdownload_hint = gr.Markdown(visible=False)
+            fbtn.click(
+                fn=redact_file,
+                inputs=finp,
+                outputs=[flegend, fpdf, fdownload_hint],
+            )
 
         with gr.Tab("Info"):
             gr.Markdown("""
