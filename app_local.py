@@ -34,15 +34,67 @@ import gradio as gr
 
 _model = None
 
+
+def _checkpoint_dir() -> Path:
+    """Return the default OPF checkpoint directory."""
+    return Path.home() / ".opf" / "privacy_filter"
+
+
+def _is_partial_checkpoint(model_dir: Path) -> bool:
+    """Return True if ``model_dir`` exists but is missing required files."""
+    if not model_dir.exists() or not model_dir.is_dir():
+        return False
+    if not (model_dir / "config.json").is_file():
+        return True
+    return not any(model_dir.glob("*.safetensors"))
+
+
+def _ensure_model_present(progress_callback=None) -> None:
+    """Download the OPF checkpoint if it is missing or in a partial state."""
+    from model_update import download_model_update
+    success, message = download_model_update(progress_callback=progress_callback)
+    if not success:
+        raise RuntimeError(
+            f"Could not download the PII model: {message}. "
+            f"Check your internet connection or remove the partial "
+            f"checkpoint at {_checkpoint_dir()} and try again."
+        )
+
+
 def get_model():
     global _model
     if _model is not None:
         return _model
     print("Loading Privacy Filter model...")
+
+    from opf._api import OPF
+
     try:
-        from opf._api import OPF
         _model = OPF(device="cpu")
         print("[OK] Model loaded")
+        return _model
+    except (FileNotFoundError, RuntimeError) as exc:
+        # OPF raises FileNotFoundError when the directory is missing
+        # required files (e.g. config.json), and RuntimeError for other
+        # validation failures. In both cases, a partial or missing
+        # checkpoint is the most common cause -- try to recover by
+        # downloading a fresh copy.
+        message = str(exc)
+        recoverable = (
+            "missing config.json" in message
+            or "no .safetensors" in message
+            or "Checkpoint directory not found" in message
+        )
+        if not recoverable or not _is_partial_checkpoint(_checkpoint_dir()):
+            print(f"[ERROR] {exc}")
+            raise
+
+        print("[INFO] Checkpoint is missing or partial. Downloading...")
+        _ensure_model_present(
+            progress_callback=lambda msg, pct: print(f"[INFO] {msg}")
+        )
+        _model = OPF(device="cpu")
+        print("[OK] Model loaded after download")
         return _model
     except Exception as e:
         print(f"[ERROR] {e}")

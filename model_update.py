@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import shutil
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -24,6 +25,26 @@ HF_MODEL_REPO = "openai/privacy-filter"
 HF_API_URL = f"https://huggingface.co/api/models/{HF_MODEL_REPO}"
 MODEL_DIR = Path.home() / ".opf" / "privacy_filter"
 LOCAL_DATE_FILE = MODEL_DIR / ".last_updated"
+
+
+def _is_checkpoint_valid(model_dir: Path) -> bool:
+    """Return True if ``model_dir`` looks like a complete OPF checkpoint."""
+    if not model_dir.is_dir():
+        return False
+    if not (model_dir / "config.json").is_file():
+        return False
+    return any(model_dir.glob("*.safetensors"))
+
+
+def _is_partial_checkpoint(model_dir: Path) -> bool:
+    """Return True if ``model_dir`` exists but is missing required files.
+
+    A partial checkpoint can be a previous failed download or a corrupt
+    install; in either case the safest thing to do is wipe it and start over.
+    """
+    if not model_dir.exists() or not model_dir.is_dir():
+        return False
+    return not _is_checkpoint_valid(model_dir)
 
 
 def get_local_model_date() -> Optional[str]:
@@ -144,13 +165,53 @@ def check_for_model_update() -> ModelUpdateInfo:
         )
 
 
+def _download_checkpoint_to(target_dir: Path) -> None:
+    """Download the OPF checkpoint into ``target_dir`` using huggingface_hub.
+
+    The download writes files into ``target_dir/original/`` and then promotes
+    them to ``target_dir/`` to match the layout ``OPF`` expects.
+
+    Raises:
+        ImportError: If ``huggingface_hub`` is not installed.
+        RuntimeError: If the download fails or the result is missing files.
+    """
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(
+        repo_id=HF_MODEL_REPO,
+        local_dir=str(target_dir),
+        allow_patterns=["original/*"],
+    )
+    original = target_dir / "original"
+    if not original.is_dir():
+        raise RuntimeError(
+            f"Downloaded checkpoint is missing expected subtree: {original}"
+        )
+    for path in original.iterdir():
+        destination = target_dir / path.name
+        if destination.exists():
+            raise RuntimeError(
+                "Cannot promote downloaded checkpoint file because "
+                f"destination already exists: {destination}"
+            )
+        shutil.move(str(path), str(destination))
+    original.rmdir()
+
+
 def download_model_update(
     progress_callback: Optional[Callable[[str, float], None]] = None,
 ) -> tuple[bool, str]:
-    """Download and install the model update.
+    """Download and install the model update atomically.
 
-    Removes the local model cache and re-downloads from HuggingFace.
-    Uses the existing checkpoint_download module for the actual download.
+    The new checkpoint is first written to a temporary directory next to the
+    model folder. Only after the download finishes and validates is the
+    existing model replaced. If anything fails (network error, partial
+    download, validation error) the previous working model is left
+    untouched.
+
+    If the existing ``MODEL_DIR`` is detected in a partial state (e.g. from
+    a previously interrupted download) it is wiped before downloading so the
+    new install starts clean.
 
     Args:
         progress_callback: Optional callback(status_message, progress_0_to_1)
@@ -158,29 +219,41 @@ def download_model_update(
     Returns:
         Tuple of (success: bool, message: str)
     """
+    new_dir: Optional[Path] = None
     try:
-        if progress_callback:
-            progress_callback("Removing current model...", 0.1)
+        if _is_partial_checkpoint(MODEL_DIR):
+            if progress_callback:
+                progress_callback("Removing partial model...", 0.1)
+            shutil.rmtree(MODEL_DIR)
 
-        # Remove existing model
-        if MODEL_DIR.exists():
-            shutil.rmtree(str(MODEL_DIR))
+        parent = MODEL_DIR.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="opf_download_", dir=str(parent)
+        ) as tmp_name:
+            new_dir = Path(tmp_name)
+            if progress_callback:
+                progress_callback("Downloading new model...", 0.3)
+            if progress_callback:
+                progress_callback("Downloading model weights...", 0.5)
+            _download_checkpoint_to(new_dir)
 
-        if progress_callback:
-            progress_callback("Downloading new model...", 0.3)
+            if not _is_checkpoint_valid(new_dir):
+                raise RuntimeError(
+                    "Downloaded checkpoint is missing config.json or "
+                    "safetensors files"
+                )
 
-        # Import and use the existing checkpoint download
-        from opf._common.checkpoint_download import ensure_default_checkpoint
-
-        if progress_callback:
-            progress_callback("Downloading model weights...", 0.5)
-
-        ensure_default_checkpoint()
+            if progress_callback:
+                progress_callback("Activating new model...", 0.85)
+            if MODEL_DIR.exists():
+                shutil.rmtree(MODEL_DIR)
+            shutil.move(str(new_dir), str(MODEL_DIR))
+            new_dir = None  # moved into place; do not clean up
 
         if progress_callback:
             progress_callback("Saving update timestamp...", 0.9)
 
-        # Save the remote date as local date
         remote_date = get_remote_model_date()
         if remote_date:
             save_local_model_date(remote_date)
@@ -191,4 +264,6 @@ def download_model_update(
         return True, "Model updated successfully"
 
     except Exception as exc:
+        if new_dir is not None:
+            shutil.rmtree(new_dir, ignore_errors=True)
         return False, f"Update failed: {exc}"
