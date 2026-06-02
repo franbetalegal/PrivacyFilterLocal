@@ -370,13 +370,14 @@ function Install-Dependencies {
     }
 
     # Web interface dependencies.
-    # Only packages NOT covered by pyproject.toml are listed here, and they
-    # are installed with a minimum-version specifier (or unpinned) so the
-    # resolver can pick up security patches.
+    # Only packages NOT covered by pyproject.toml are listed here.
+    # Gradio and gradio_client are pinned to exact versions: newer 4.45.x
+    # and 5.x releases have a regression that freezes the UI when switching
+    # tabs in this app. Keep the pin until Gradio fixes the issue upstream.
     Write-Info "Installing web interface dependencies..."
     $webDeps = @(
-        "gradio>=4.44.0",
-        "gradio_client>=1.3.0",
+        "gradio==4.44.0",
+        "gradio_client==1.3.0",
         "PyMuPDF",
         "python-docx"
     )
