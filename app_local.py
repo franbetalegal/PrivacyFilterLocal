@@ -268,10 +268,14 @@ def redact_text(text):
         spans = result.detected_spans if hasattr(result, 'detected_spans') else []
         if spans:
             lines = [f"**{len(spans)} entities detected** ({elapsed:.1f}s)", ""]
+            lines.append("<details>")
+            lines.append(f"<summary>Show {len(spans)} entities</summary>")
+            lines.append("")
             lines.extend(
                 f"- `{s.label if hasattr(s, 'label') else '?'}`: {s.text if hasattr(s, 'text') else ''}"
                 for s in spans
             )
+            lines.append("</details>")
             summary = "\n".join(lines)
         else:
             summary = f"_No PII entities detected_ ({elapsed:.1f}s)"
@@ -324,6 +328,11 @@ def redact_file(file, progress=gr.Progress()):
             "",
         ]
         if spans:
+            legend_parts.append("<details>")
+            legend_parts.append(
+                f"<summary>Show {len(spans)} detected entities</summary>"
+            )
+            legend_parts.append("")
             legend_parts.append("| # | Type | Original | Replacement |")
             legend_parts.append("|--:|------|----------|------------|")
             for i, s in enumerate(spans, 1):
@@ -331,6 +340,7 @@ def redact_file(file, progress=gr.Progress()):
                 txt = s.text if hasattr(s, "text") else ""
                 ph = s.placeholder if hasattr(s, "placeholder") else ""
                 legend_parts.append(f"| {i} | `{label}` | {txt} | {ph} |")
+            legend_parts.append("</details>")
         else:
             legend_parts.append("_No PII entities detected._")
         legend = "\n".join(legend_parts)
