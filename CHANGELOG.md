@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Visible "Click the file above to download it." hint in the Files tab when
   a redacted PDF/DOCX is ready, so the download affordance is obvious
+- Detected-entities listing in both the Files tab (table) and the Text tab
+  (bullet list) is now wrapped in a `<details>`/`<summary>` collapse block
+  so a long redaction result stays compact by default and can be expanded
+  on demand
 - `app_local.get_model()` now auto-recovers from a partial or missing
   checkpoint by transparently re-downloading the model on next launch
 - `install.ps1` accepts `-PythonVersion` and `-GitVersion` parameters so the
