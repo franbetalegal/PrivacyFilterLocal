@@ -286,9 +286,9 @@ def create_ui():
             btn.click(fn=redact_text, inputs=inp, outputs=[out, info])
             gr.Examples(
                 examples=[
-                    "Hola, soy Maria Lopez. Mi email es maria@empresa.com y mi DNI es 12345678Z.",
-                    "Contacta al +34 912 345 678 o envia email a ayuda@soporte.es",
-                    "La reunion es el 15/03/2026. Cuenta: ES91 2100 0418 4502 0005 1332",
+                    "Hi, I'm John Smith. My email is john.smith@example.com and my SSN is 123-45-6789.",
+                    "Call me at +1 555 987 6543 or email support@company.org",
+                    "The meeting is on 03/15/2026. Account: 4532-1234-5678-9012",
                 ],
                 inputs=inp
             )
