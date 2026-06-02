@@ -172,7 +172,7 @@ def download_and_install_update(
     Returns:
         Tuple of (success: bool, message: str)
     """
-    project_dir = Path(__file__).parent.parent
+    project_dir = Path(__file__).parent
     temp_dir = None
     
     try:
