@@ -790,8 +790,8 @@ if __name__ == "__main__":
     Set-Content -Path $appPath -Value $appContent -Encoding UTF8
     Write-OK "app_local.py created"
 
-    # Create iniciar.bat
-    $batPath = "$PROJECT_DIR\iniciar.bat"
+    # Create start.bat
+    $batPath = "$PROJECT_DIR\start.bat"
     $batContent = @"
 @echo off
 title Privacy Filter - Local
@@ -814,7 +814,7 @@ python app_local.py
 pause
 "@
     Set-Content -Path $batPath -Value $batContent -Encoding ASCII
-    Write-OK "iniciar.bat created"
+    Write-OK "start.bat created"
 }
 
 # ============================================================
