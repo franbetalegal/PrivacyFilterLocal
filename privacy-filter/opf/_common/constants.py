@@ -21,6 +21,3 @@ REDACTED_OUTPUT_LABEL: Final[str] = "redacted"
 
 REDACTED_OUTPUT_PLACEHOLDER: Final[str] = "<REDACTED>"
 """Replacement marker inserted for spans in fully redacted output mode."""
-
-VERSION_FILE_NAME: Final[str] = ".opf_version"
-"""Filename used to store the local checkpoint commit hash for update checking."""
