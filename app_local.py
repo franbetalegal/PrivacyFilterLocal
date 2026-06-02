@@ -237,41 +237,103 @@ def update_model(progress=gr.Progress()):
         return f"**Error** updating: {e}"
 
 
-def _check_update_background(update_banner, update_btn):
-    """Background thread that checks for model updates."""
+# ============================================================
+#  APP UPDATE FUNCTIONS
+# ============================================================
+
+_app_update_info = None
+
+def _check_app_update_background():
+    """Background thread that checks for app updates."""
+    global _app_update_info
     try:
-        from opf._common.update_check import check_for_update
-        info = check_for_update()
-        if info.error:
-            return
-        if info.update_available:
-            date_str = f" ({info.remote_date[:10]})" if info.remote_date else ""
-            update_banner.update(
-                value=f"### A model update is available{date_str}\n"
-                      f"Current: `{info.local_hash[:8] if info.local_hash else 'unknown'}` | "
-                      f"Latest: `{info.remote_hash[:8] if info.remote_hash else '?'}`",
-                visible=True,
-            )
-            update_btn.update(visible=True)
+        from app_update import check_for_app_update
+        _app_update_info = check_for_app_update()
+        if _app_update_info.update_available:
+            print(f"[UPDATE] App update available: v{_app_update_info.current_version} -> v{_app_update_info.latest_version}")
     except Exception:
         pass
+
+def install_app_update(progress=gr.Progress()):
+    """Download and install the app update."""
+    global _app_update_info
+    
+    if not _app_update_info or not _app_update_info.update_available:
+        return "_No update available._"
+    
+    if not _app_update_info.download_url:
+        return "_No download URL found for this update._"
+    
+    try:
+        from app_update import download_and_install_update, restart_app
+        
+        def update_progress(message, pct):
+            progress((pct, 1.0), desc=message)
+        
+        success, message = download_and_install_update(
+            _app_update_info.download_url,
+            progress_callback=update_progress,
+        )
+        
+        if success:
+            progress((1.0, 1.0), desc="Done!")
+            # Schedule restart after 2 seconds
+            threading.Timer(2.0, restart_app).start()
+            return f"**{message}**\n\nRestarting in 2 seconds..."
+        else:
+            return f"**Update failed:** {message}\n\nPlease update manually:\n```\ncd {Path(__file__).parent}\ngit pull\npip install -e .\n```"
+    
+    except Exception as e:
+        return f"**Error:** {e}"
 
 
 def create_ui():
     with gr.Blocks(title="Privacy Filter - Local") as app:
-        update_banner = gr.Markdown(
-            value="",
-            visible=False,
-        )
-        update_btn = gr.Button(
-            "Update model now",
-            variant="primary",
-            visible=False,
-        )
+        # Read current version
+        try:
+            from app_update import get_local_version
+            current_version = get_local_version()
+        except Exception:
+            current_version = "unknown"
+        
+        # Update banner (initially hidden)
+        with gr.Row():
+            update_banner = gr.Markdown(
+                value="",
+                visible=False,
+            )
+        
+        with gr.Row():
+            update_btn = gr.Button(
+                "Update now",
+                variant="primary",
+                visible=False,
+                scale=1,
+            )
+            later_btn = gr.Button(
+                "Later",
+                variant="secondary",
+                visible=False,
+                scale=1,
+            )
+        
         update_msg = gr.Markdown()
-        update_btn.click(fn=update_model, outputs=update_msg)
+        
+        update_btn.click(
+            fn=install_app_update,
+            outputs=update_msg,
+        )
+        
+        later_btn.click(
+            fn=lambda: (
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=False),
+            ),
+            outputs=[update_banner, update_btn, later_btn],
+        )
 
-        gr.Markdown("# Privacy Filter - Local\n*100% local PII detection*")
+        gr.Markdown(f"# Privacy Filter - Local\n*100% local PII detection* | v{current_version}")
 
         with gr.Tab("Text"):
             with gr.Row():
@@ -335,16 +397,49 @@ def create_ui():
             manual_update_msg = gr.Markdown()
             manual_update_btn.click(fn=update_model, outputs=manual_update_msg)
 
+        # Load update check on app start
+        def check_and_update_banner():
+            """Check for updates and return banner content."""
+            global _app_update_info
+            
+            # Wait for background check to complete
+            for _ in range(50):  # Wait up to 5 seconds
+                if _app_update_info is not None:
+                    break
+                time.sleep(0.1)
+            
+            if _app_update_info is None or not _app_update_info.update_available:
+                return (
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                    gr.update(visible=False),
+                )
+            
+            # Format changelog
+            changelog = _app_update_info.changelog
+            if changelog:
+                # Trim long changelogs
+                lines = changelog.split("\n")
+                if len(lines) > 20:
+                    changelog = "\n".join(lines[:20]) + "\n\n..."
+            
+            date_str = f" ({_app_update_info.published_date})" if _app_update_info.published_date else ""
+            banner_text = f"""### A new version is available: v{_app_update_info.current_version} \u2192 v{_app_update_info.latest_version}{date_str}
+
+**What's New:**
+
+{changelog if changelog else "No changelog available."}
+"""
+            
+            return (
+                gr.update(value=banner_text, visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+            )
+        
         app.load(
-            fn=lambda: None,
-            inputs=None,
-            outputs=None,
-            js="""() => {
-                setTimeout(() => {
-                    const banner = document.querySelector('[data-testid="markdown"]');
-                    if (banner) banner.scrollIntoView({behavior: 'smooth'});
-                }, 3000);
-            }""",
+            fn=check_and_update_banner,
+            outputs=[update_banner, update_btn, later_btn],
         )
 
     return app
@@ -352,22 +447,7 @@ def create_ui():
 
 def _start_update_check(app):
     """Start background update check after a short delay."""
-    def _delayed_check():
-        time.sleep(5)
-        try:
-            from opf._common.update_check import check_for_update
-            info = check_for_update()
-            if info.update_available:
-                date_str = f" ({info.remote_date[:10]})" if info.remote_date else ""
-                banner_text = (
-                    f"### A model update is available{date_str}\n"
-                    f"Current: `{info.local_hash[:8] if info.local_hash else 'unknown'}` | "
-                    f"Latest: `{info.remote_hash[:8] if info.remote_hash else '?'}`"
-                )
-                print(f"[UPDATE] Model update available: {info.remote_hash[:8] if info.remote_hash else '?'}")
-        except Exception:
-            pass
-    threading.Thread(target=_delayed_check, daemon=True).start()
+    threading.Thread(target=_check_app_update_background, daemon=True).start()
 
 
 if __name__ == "__main__":

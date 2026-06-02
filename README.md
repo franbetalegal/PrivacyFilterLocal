@@ -8,7 +8,9 @@
 - Processes text, PDF, and DOCX files
 - Returns redacted PDF/DOCX with PII masked
 - Runs entirely offline - no data leaves your computer
-- Automatic update checking via HuggingFace API
+- Automatic model update checking via HuggingFace API
+- Automatic app update checking via GitHub Releases
+- One-click update installation with changelog display
 - Web interface built with Gradio
 
 ## Requirements
@@ -75,6 +77,10 @@ opf redact
 ```
 privacy-filter/
 ├── app_local.py          # Web interface
+├── app_update.py         # Auto-update module
+├── create_release.py     # Release creation script
+├── VERSION               # Current version number
+├── CHANGELOG.md          # Version history
 ├── start.bat             # Launch script
 ├── install.bat           # Installer launcher
 ├── install.ps1           # Full installer
@@ -84,9 +90,51 @@ privacy-filter/
     └── examples/         # Demo data and scripts
 ```
 
+## Updating
+
+### Automatic Update (Recommended)
+
+The application automatically checks for updates when launched. If an update is available:
+
+1. A banner appears at the top of the interface showing:
+   - Current version and new version
+   - Changelog with new features and fixes
+2. Click **"Update now"** to download and install
+3. The app restarts automatically with the new version
+
+### Manual Update
+
+```bash
+cd C:\privacy-filter
+git pull
+pip install -e .
+```
+
+### Creating a New Release
+
+```bash
+# Update VERSION file and create GitHub Release
+python create_release.py 1.2.0 --changelog-file CHANGELOG.md
+
+# Or with inline changelog
+python create_release.py 1.2.0 --changelog "## What's New\n• Feature X\n• Feature Y"
+
+# Dry run (no actual release created)
+python create_release.py 1.2.0 --changelog "Test" --dry-run
+```
+
+## Version History
+
+See [CHANGELOG.md](CHANGELOG.md) for a complete list of changes.
+
 ## Automatic Update Checking
 
-The application automatically checks for model updates when launched. If an update is available, a banner will appear at the top of the interface with an "Update model now" button.
+The application checks for updates from two sources:
+
+1. **Model Updates** (HuggingFace): Checks for newer model versions
+2. **App Updates** (GitHub Releases): Checks for newer application versions with changelog
+
+Both checks are silent and only show notifications when updates are available.
 
 ## License
 
