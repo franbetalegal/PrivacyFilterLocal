@@ -1,13 +1,13 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Instalador completo de OpenAI Privacy Filter con interfaz web local.
+    Complete installer for OpenAI Privacy Filter with local web interface.
 .DESCRIPTION
-    Comprueba e instala todas las dependencias necesarias con multiples fallbacks.
+    Checks and installs all required dependencies with multiple fallbacks.
 .PARAMETER Force
-    Forzar reinstalacion/sobrescritura de archivos existentes.
+    Force reinstallation/overwrite of existing files.
 .PARAMETER NoRun
-    Solo instalar, no ejecutar la aplicacion.
+    Install only, do not launch the application.
 .EXAMPLE
     .\install.ps1
     .\install.ps1 -Force
@@ -22,7 +22,7 @@ $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
 # ============================================================
-#  CONFIGURACION
+#  CONFIGURATION
 # ============================================================
 
 $PROJECT_DIR = "C:\privacy-filter"
@@ -32,7 +32,7 @@ $PYTHON_URL = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe"
 $PYTHON_INSTALLER = "$env:TEMP\python-installer-312.exe"
 
 # ============================================================
-#  FUNCIONES DE LOG
+#  LOG FUNCTIONS
 # ============================================================
 
 function Write-Step { param([string]$M); Write-Host "`n=== $M ===" -ForegroundColor Cyan }
@@ -53,15 +53,15 @@ function Refresh-Path {
 }
 
 # ============================================================
-#  DETECCION DE PYTHON
+#  PYTHON DETECTION
 # ============================================================
 
 function Test-PythonReal {
     <#
     .SYNOPSIS
-        Busca un Python 3.10+ real (no stub de Windows Store).
+        Finds a real Python 3.10+ (not a Windows Store stub).
     #>
-    # Buscar en comandos del PATH
+    # Search PATH commands
     foreach ($cmd in @("python", "python3", "python3.12", "python3.11", "python3.10")) {
         try {
             $output = & $cmd --version 2>&1 | Out-String
@@ -77,7 +77,7 @@ function Test-PythonReal {
         } catch { }
     }
 
-    # Buscar en rutas conocidas
+    # Search known paths
     foreach ($p in @(
         "C:\Python312\python.exe", "C:\Python311\python.exe", "C:\Python310\python.exe",
         "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
@@ -104,40 +104,40 @@ function Test-PythonReal {
 }
 
 # ============================================================
-#  INSTALACION DE PYTHON (3 metodos con fallback)
+#  PYTHON INSTALLATION (3 methods with fallback)
 # ============================================================
 
 function Install-Python {
-    Write-Step "INSTALANDO PYTHON"
+    Write-Step "INSTALLING PYTHON"
 
-    # Metodo 1: winget
+    # Method 1: winget
     if (Test-CommandExists "winget") {
-        Write-Info "Intentando con winget..."
+        Write-Info "Trying winget..."
         $null = winget install Python.Python.3.12 --accept-source-agreements --accept-package-agreements --silent 2>&1
         Refresh-Path
         $check = Test-PythonReal
-        if ($check.Found) { Write-OK "Python instalado via winget: $($check.Version)"; return $true }
-        Write-Warn "winget no funciono"
+        if ($check.Found) { Write-OK "Python installed via winget: $($check.Version)"; return $true }
+        Write-Warn "winget failed"
     }
 
-    # Metodo 2: chocolatey
+    # Method 2: chocolatey
     if (Test-CommandExists "choco") {
-        Write-Info "Intentando con chocolatey..."
+        Write-Info "Trying chocolatey..."
         $null = choco install python -y 2>&1
         Refresh-Path
         $check = Test-PythonReal
-        if ($check.Found) { Write-OK "Python instalado via choco: $($check.Version)"; return $true }
-        Write-Warn "chocolatey no funciono"
+        if ($check.Found) { Write-OK "Python installed via choco: $($check.Version)"; return $true }
+        Write-Warn "chocolatey failed"
     }
 
-    # Metodo 3: Descarga directa
-    Write-Info "Descargando Python desde python.org..."
+    # Method 3: Direct download
+    Write-Info "Downloading Python from python.org..."
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-WebRequest -Uri $PYTHON_URL -OutFile $PYTHON_INSTALLER -UseBasicParsing -TimeoutSec 300
-        Write-OK "Descarga completada"
+        Write-OK "Download complete"
 
-        Write-Info "Instalando en silencio (puede tardar 1-2 minutos)..."
+        Write-Info "Installing silently (may take 1-2 minutes)..."
         $proc = Start-Process -FilePath $PYTHON_INSTALLER -ArgumentList @(
             "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_pip=1",
             "Include_test=0", "TargetDir=C:\Python312", "CompileAll=0"
@@ -148,9 +148,9 @@ function Install-Python {
         if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
             Refresh-Path
             $check = Test-PythonReal
-            if ($check.Found) { Write-OK "Python instalado via descarga: $($check.Version)"; return $true }
+            if ($check.Found) { Write-OK "Python installed via download: $($check.Version)"; return $true }
         }
-        Write-Fail "El instalador termino con codigo $($proc.ExitCode)"
+        Write-Fail "Installer exited with code $($proc.ExitCode)"
     } catch {
         Write-Fail "Error: $_"
         Remove-Item $PYTHON_INSTALLER -Force -ErrorAction SilentlyContinue
@@ -160,40 +160,40 @@ function Install-Python {
 }
 
 # ============================================================
-#  INSTALACION DE GIT (3 metodos con fallback)
+#  GIT INSTALLATION (3 methods with fallback)
 # ============================================================
 
 function Install-Git {
-    Write-Step "INSTALANDO GIT"
+    Write-Step "INSTALLING GIT"
 
-    # Metodo 1: winget
+    # Method 1: winget
     if (Test-CommandExists "winget") {
-        Write-Info "Intentando con winget..."
+        Write-Info "Trying winget..."
         $null = winget install Git.Git --accept-source-agreements --accept-package-agreements --silent 2>&1
         Refresh-Path
-        if (Test-CommandExists "git") { Write-OK "Git instalado via winget"; return $true }
-        Write-Warn "winget no funciono"
+        if (Test-CommandExists "git") { Write-OK "Git installed via winget"; return $true }
+        Write-Warn "winget failed"
     }
 
-    # Metodo 2: chocolatey
+    # Method 2: chocolatey
     if (Test-CommandExists "choco") {
-        Write-Info "Intentando con chocolatey..."
+        Write-Info "Trying chocolatey..."
         $null = choco install git -y 2>&1
         Refresh-Path
-        if (Test-CommandExists "git") { Write-OK "Git instalado via choco"; return $true }
-        Write-Warn "chocolatey no funciono"
+        if (Test-CommandExists "git") { Write-OK "Git installed via choco"; return $true }
+        Write-Warn "chocolatey failed"
     }
 
-    # Metodo 3: Descarga directa
-    Write-Info "Descargando Git..."
+    # Method 3: Direct download
+    Write-Info "Downloading Git..."
     $gitUrl = "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.2/Git-2.47.1.2-64-bit.exe"
     $gitInstaller = "$env:TEMP\git-installer.exe"
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-WebRequest -Uri $gitUrl -OutFile $gitInstaller -UseBasicParsing -TimeoutSec 300
-        Write-OK "Descarga completada"
+        Write-OK "Download complete"
 
-        Write-Info "Instalando en silencio..."
+        Write-Info "Installing silently..."
         $proc = Start-Process -FilePath $gitInstaller -ArgumentList @(
             "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-",
             "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS",
@@ -204,9 +204,9 @@ function Install-Git {
 
         if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
             Refresh-Path
-            if (Test-CommandExists "git") { Write-OK "Git instalado via descarga"; return $true }
+            if (Test-CommandExists "git") { Write-OK "Git installed via download"; return $true }
         }
-        Write-Fail "El instalador termino con codigo $($proc.ExitCode)"
+        Write-Fail "Installer exited with code $($proc.ExitCode)"
     } catch {
         Write-Fail "Error: $_"
         Remove-Item $gitInstaller -Force -ErrorAction SilentlyContinue
@@ -216,60 +216,60 @@ function Install-Git {
 }
 
 # ============================================================
-#  CLONAR REPOSITORIO (con verificacion completa)
+#  CLONE REPOSITORY (with full verification)
 # ============================================================
 
 function Clone-Repository {
-    Write-Step "CLONANDO REPOSITORIO"
+    Write-Step "CLONING REPOSITORY"
 
-    # Verificar conectividad
-    Write-Info "Verificando conectividad a GitHub..."
+    # Check connectivity
+    Write-Info "Checking connectivity to GitHub..."
     try {
         $response = Invoke-WebRequest -Uri "https://github.com" -UseBasicParsing -TimeoutSec 10 -Method Head
-        Write-OK "Conectividad OK"
+        Write-OK "Connectivity OK"
     } catch {
-        Write-Fail "No se pudo conectar a GitHub. Verifica tu conexion a internet."
+        Write-Fail "Could not connect to GitHub. Check your internet connection."
         return $false
     }
 
-    # Verificar si el repositorio ya existe y esta completo
+    # Check if repository already exists and is complete
     if (Test-Path "$REPO_DIR\.git") {
-        Write-Warn "Repositorio ya existe"
+        Write-Warn "Repository already exists"
 
-        # Verificar que esta completo
+        # Check if complete
         $hasOpf = Test-Path "$REPO_DIR\opf"
         $hasReadme = Test-Path "$REPO_DIR\README.md"
         $hasPyproject = Test-Path "$REPO_DIR\pyproject.toml"
 
         if ($hasOpf -and $hasReadme -and $hasPyproject) {
-            Write-OK "Repositorio verificado (completo)"
+            Write-OK "Repository verified (complete)"
             if (-not $Force) {
                 return $true
             }
-            Write-Warn "Forzando reclonaje..."
+            Write-Warn "Forcing re-clone..."
         } else {
-            Write-Warn "Repositorio incompleto. Eliminando..."
+            Write-Warn "Repository incomplete. Removing..."
         }
 
         Remove-Item -Recurse -Force $REPO_DIR -ErrorAction SilentlyContinue
     }
 
-    # Eliminar directorio vacio si existe
+    # Remove empty directory if it exists
     if (Test-Path $REPO_DIR) {
         Remove-Item -Recurse -Force $REPO_DIR -ErrorAction SilentlyContinue
     }
 
-    # Clonar
-    Write-Info "Clonando desde $REPO_URL..."
+    # Clone
+    Write-Info "Cloning from $REPO_URL..."
     $gitOutput = & git clone $REPO_URL $REPO_DIR 2>&1 | Out-String
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Fail "Error durante git clone:"
+        Write-Fail "Error during git clone:"
         Write-Host $gitOutput -ForegroundColor Red
         return $false
     }
 
-    # Verificar que el clone fue exitoso
+    # Verify clone was successful
     $checks = @{
         ".git"     = Test-Path "$REPO_DIR\.git"
         "opf"      = Test-Path "$REPO_DIR\opf"
@@ -280,32 +280,32 @@ function Clone-Repository {
     $allOk = $true
     foreach ($key in $checks.Keys) {
         if ($checks[$key]) {
-            Write-OK "$key verificado"
+            Write-OK "$key verified"
         } else {
-            Write-Fail "$key NO encontrado"
+            Write-Fail "$key NOT found"
             $allOk = $false
         }
     }
 
     if ($allOk) {
-        Write-OK "Repositorio clonado y verificado correctamente"
+        Write-OK "Repository cloned and verified successfully"
         return $true
     } else {
-        Write-Fail "El repositorio esta incompleto"
+        Write-Fail "Repository is incomplete"
         return $false
     }
 }
 
 # ============================================================
-#  INSTALAR DEPENDENCIAS PYTHON
+#  INSTALL PYTHON DEPENDENCIES
 # ============================================================
 
 function Install-Dependencies {
-    Write-Step "INSTALANDO DEPENDENCIAS PYTHON"
+    Write-Step "INSTALLING PYTHON DEPENDENCIES"
 
     $py = Test-PythonReal
     if (-not $py.Found) {
-        Write-Fail "Python no encontrado"
+        Write-Fail "Python not found"
         return $false
     }
 
@@ -313,29 +313,29 @@ function Install-Dependencies {
     $pythonDir = Split-Path $pythonPath
     $pipPath = Join-Path $pythonDir "pip.exe"
 
-    # Si pip.exe no existe, buscar pip3.exe
+    # If pip.exe doesn't exist, try pip3.exe
     if (-not (Test-Path $pipPath)) {
         $pipPath = Join-Path $pythonDir "pip3.exe"
     }
 
-    # Si aun no existe, usar python -m pip
+    # If still not found, use python -m pip
     $useModule = -not (Test-Path $pipPath)
     if ($useModule) {
-        Write-Warn "pip.exe no encontrado, usando python -m pip"
+        Write-Warn "pip.exe not found, using python -m pip"
         $pipPath = $pythonPath
     }
 
-    # Actualizar pip
-    Write-Info "Actualizando pip..."
+    # Update pip
+    Write-Info "Updating pip..."
     if ($useModule) {
         & $pythonPath -m pip install --upgrade pip 2>&1 | Out-Null
     } else {
         & $pipPath install --upgrade pip 2>&1 | Out-Null
     }
-    Write-OK "pip actualizado"
+    Write-OK "pip updated"
 
-    # Instalar dependencias del repositorio
-    Write-Info "Instalando dependencias del proyecto..."
+    # Install project dependencies
+    Write-Info "Installing project dependencies..."
     Push-Location $REPO_DIR
 
     if ($useModule) {
@@ -345,14 +345,14 @@ function Install-Dependencies {
     }
 
     if ($LASTEXITCODE -eq 0) {
-        Write-OK "Dependencias del proyecto instaladas"
+        Write-OK "Project dependencies installed"
     } else {
-        Write-Warn "Algunas dependencias pudieron fallar"
+        Write-Warn "Some dependencies may have failed"
         Write-Info $output
     }
 
-    # Dependencias de la interfaz web
-    Write-Info "Instalando dependencias de la interfaz web..."
+    # Web interface dependencies
+    Write-Info "Installing web interface dependencies..."
     $webDeps = @(
         "gradio==4.44.0",
         "gradio_client==1.3.0",
@@ -374,9 +374,9 @@ function Install-Dependencies {
             & $pipPath install --force-reinstall $dep 2>&1 | Out-Null
         }
         if ($LASTEXITCODE -eq 0) {
-            Write-OK "$dep instalado"
+            Write-OK "$dep installed"
         } else {
-            Write-Warn "Error instalando $dep"
+            Write-Warn "Error installing $dep"
         }
     }
 
@@ -385,22 +385,23 @@ function Install-Dependencies {
 }
 
 # ============================================================
-#  CREAR APP_LOCAL.PY
+#  CREATE APP_LOCAL.PY
 # ============================================================
 
 function New-AppLocal {
-    Write-Step "GENERANDO APP_LOCAL.PY"
+    Write-Step "GENERATING APP_LOCAL.PY"
 
     $appPath = "$PROJECT_DIR\app_local.py"
 
     if ((Test-Path $appPath) -and -not $Force) {
-        Write-Warn "app_local.py ya existe (usa -Force para sobrescribir)"
+        Write-Warn "app_local.py already exists (use -Force to overwrite)"
         return
     }
 
     $appContent = @'
 import sys
 import time
+import threading
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).parent
@@ -438,11 +439,11 @@ def get_model():
     global _model
     if _model is not None:
         return _model
-    print("Cargando modelo Privacy Filter...")
+    print("Loading Privacy Filter model...")
     try:
         from opf._api import OPF
         _model = OPF(device="cpu")
-        print("[OK] Modelo cargado")
+        print("[OK] Model loaded")
         return _model
     except Exception as e:
         print(f"[ERROR] {e}")
@@ -537,63 +538,63 @@ def redact_docx(input_path, detected_spans):
 
 def redact_text(text):
     if not text or not text.strip():
-        return "", "Introduce texto."
+        return "", "Enter some text."
     try:
         model = get_model()
         if model is None:
-            return text, "Cargando modelo..."
+            return text, "Loading model..."
         start = time.time()
         result = model.redact(text)
         elapsed = time.time() - start
         redacted = result.redacted_text if hasattr(result, 'redacted_text') else str(result)
         spans = result.detected_spans if hasattr(result, 'detected_spans') else []
         if spans:
-            summary = f"**{len(spans)} entidades detectadas** ({elapsed:.1f}s)\n\n"
+            summary = f"**{len(spans)} entities detected** ({elapsed:.1f}s)\n\n"
             for s in spans:
                 label = s.label if hasattr(s, 'label') else "?"
                 txt = s.text if hasattr(s, 'text') else ""
                 summary += f"- `{label}`: {txt}\n"
         else:
-            summary = f"_No se detectaron entidades PII_ ({elapsed:.1f}s)"
+            summary = f"_No PII entities detected_ ({elapsed:.1f}s)"
         return redacted, summary
     except Exception as e:
         return text, f"Error: {e}"
 
 def redact_file(file, progress=gr.Progress()):
     if file is None:
-        return "_Sube un archivo._", None
+        return "_Upload a file._", None
     try:
-        progress((0, 5), desc="Cargando modelo...")
+        progress((0, 5), desc="Loading model...")
         model = get_model()
         if model is None:
-            return "_Cargando modelo..._", None
+            return "_Loading model..._", None
 
-        progress((1, 5), desc="Leyendo archivo...")
+        progress((1, 5), desc="Reading file...")
         path = Path(file.name)
         ext = path.suffix.lower()
         if ext == ".pdf":
             text = extract_text_from_pdf(str(path))
             if text is None:
-                return "**Error** leyendo PDF. Instala: `pip install PyMuPDF`", None
+                return "**Error** reading PDF. Install: `pip install PyMuPDF`", None
         elif ext == ".docx":
             text = extract_text_from_docx(str(path))
             if text is None:
-                return "**Error** al leer el DOCX. Revisa la consola.", None
+                return "**Error** reading DOCX. Check the console.", None
         else:
             text = path.read_text(encoding="utf-8")
 
-        progress((2, 5), desc="Detectando PII...")
+        progress((2, 5), desc="Detecting PII...")
         start = time.time()
         result = model.redact(text)
         elapsed = time.time() - start
         redacted = result.redacted_text if hasattr(result, 'redacted_text') else str(result)
         spans = result.detected_spans if hasattr(result, 'detected_spans') else []
 
-        progress((3, 5), desc="Generando enmascaramiento...")
-        legend = f"### Resultado del enmascaramiento\n\n"
-        legend += f"Procesado en **{elapsed:.1f}s** — **{len(spans)}** entidades detectadas\n\n"
+        progress((3, 5), desc="Generating redacted output...")
+        legend = f"### Redaction Result\n\n"
+        legend += f"Processed in **{elapsed:.1f}s** -- **{len(spans)}** entities detected\n\n"
         if spans:
-            legend += "| # | Tipo | Original | Reemplazo |\n"
+            legend += "| # | Type | Original | Replacement |\n"
             legend += "|--:|------|----------|----------|\n"
             for i, s in enumerate(spans, 1):
                 label = s.label if hasattr(s, 'label') else "?"
@@ -601,18 +602,18 @@ def redact_file(file, progress=gr.Progress()):
                 ph = s.placeholder if hasattr(s, 'placeholder') else ""
                 legend += f"| {i} | `{label}` | {txt} | {ph} |\n"
         else:
-            legend += "_No se detectaron entidades PII._"
+            legend += "_No PII entities detected._"
 
-        progress((4, 5), desc="Creando archivo resultado...")
+        progress((4, 5), desc="Creating output file...")
         if ext == ".pdf" and spans:
             pdf_path = redact_pdf(str(path), spans)
-            progress((5, 5), desc="Listo")
+            progress((5, 5), desc="Done")
             return legend, pdf_path
         if ext == ".docx" and spans:
             docx_path = redact_docx(str(path), spans)
-            progress((5, 5), desc="Listo")
+            progress((5, 5), desc="Done")
             return legend, docx_path
-        progress((5, 5), desc="Listo")
+        progress((5, 5), desc="Done")
         return legend, None
     except Exception as e:
         return f"**Error:** {e}", None
@@ -624,32 +625,65 @@ def update_model(progress=gr.Progress()):
         from pathlib import Path as _P
         model_dir = _P.home() / ".opf" / "privacy_filter"
         if not model_dir.exists():
-            progress((1, 3), desc="No hay modelo cacheado, se descargara al usar Detectar.")
-            return "_No hay modelo local. Se descargara automaticamente la primera vez que uses Detectar._"
-        progress((1, 3), desc="Eliminando modelo actual...")
+            progress((1, 3), desc="No cached model, will download on first use.")
+            return "_No local model found. It will be downloaded automatically the first time you use Detect._"
+        progress((1, 3), desc="Removing current model...")
         shutil.rmtree(str(model_dir))
-        progress((2, 3), desc="Descargando modelo actualizado...")
+        progress((2, 3), desc="Downloading updated model...")
         _model = None
         get_model()
-        progress((3, 3), desc="Listo")
-        return "_Modelo actualizado correctamente._"
+        progress((3, 3), desc="Done")
+        return "_Model updated successfully._"
     except Exception as e:
-        return f"**Error** al actualizar: {e}"
+        return f"**Error** updating: {e}"
+
+
+def _check_update_background(update_banner, update_btn):
+    """Background thread that checks for model updates."""
+    try:
+        from opf._common.update_check import check_for_update
+        info = check_for_update()
+        if info.error:
+            return
+        if info.update_available:
+            date_str = f" ({info.remote_date[:10]})" if info.remote_date else ""
+            update_banner.update(
+                value=f"### A model update is available{date_str}\n"
+                      f"Current: `{info.local_hash[:8] if info.local_hash else 'unknown'}` | "
+                      f"Latest: `{info.remote_hash[:8] if info.remote_hash else '?'}`",
+                visible=True,
+            )
+            update_btn.update(visible=True)
+    except Exception:
+        pass
+
 
 def create_ui():
     with gr.Blocks(title="Privacy Filter - Local") as app:
-        gr.Markdown("# Privacy Filter - Local\n*Deteccion de PII 100% local*")
+        update_banner = gr.Markdown(
+            value="",
+            visible=False,
+        )
+        update_btn = gr.Button(
+            "Update model now",
+            variant="primary",
+            visible=False,
+        )
+        update_msg = gr.Markdown()
+        update_btn.click(fn=update_model, outputs=update_msg)
 
-        with gr.Tab("Texto"):
+        gr.Markdown("# Privacy Filter - Local\n*100% local PII detection*")
+
+        with gr.Tab("Text"):
             with gr.Row():
                 inp = gr.Textbox(
-                    label="Texto a analizar",
+                    label="Text to analyze",
                     lines=5,
-                    placeholder="Mi nombre es Juan, email: juan@ejemplo.com, telefono: +34 612 345 678"
+                    placeholder="My name is John, email: john@example.com, phone: +1 555 123 4567"
                 )
-                out = gr.Textbox(label="Resultado enmascarado", lines=5)
-            btn = gr.Button("Detectar PII", variant="primary")
-            info = gr.Markdown("_Escribe texto y haz clic en Detectar._")
+                out = gr.Textbox(label="Redacted output", lines=5)
+            btn = gr.Button("Detect PII", variant="primary")
+            info = gr.Markdown("_Enter text and click Detect._")
             btn.click(fn=redact_text, inputs=inp, outputs=[out, info])
             gr.Examples(
                 examples=[
@@ -660,69 +694,103 @@ def create_ui():
                 inputs=inp
             )
 
-        with gr.Tab("Archivos"):
-            gr.Markdown("Sube archivos de texto o PDF para enmascarar PII.")
+        with gr.Tab("Files"):
+            gr.Markdown("Upload text or PDF files to redact PII.")
             finp = gr.File(
-                label="Subir archivo",
+                label="Upload file",
                 file_types=[".txt",".md",".csv",".json",".log",".py",".js",".xml",".html",".pdf",".docx"]
             )
-            fbtn = gr.Button("Procesar Archivo", variant="primary")
+            fbtn = gr.Button("Process File", variant="primary")
             flegend = gr.Markdown()
-            fpdf = gr.File(label="Archivo enmascarado (PDF/DOCX)", visible=True)
+            fpdf = gr.File(label="Redacted file (PDF/DOCX)", visible=True)
             fbtn.click(fn=redact_file, inputs=finp, outputs=[flegend, fpdf])
 
         with gr.Tab("Info"):
             gr.Markdown("""
-            ## Categorias PII detectadas
-
-            | Categoria | Descripcion |
-            |-----------|-------------|
-            | PERSON | Nombres de personas |
-            | EMAIL | Direcciones email |
-            | PHONE | Telefonos |
-            | ADDRESS | Direcciones postales |
-            | DATE | Fechas personales |
-            | URL | Enlaces web |
-            | ACCOUNT_NUMBER | Cuentas bancarias, tarjetas |
-            | SECRET | Contrasenas, claves API |
-
-            ## Formatos soportados
-
-            - Texto: .txt, .md, .csv, .json, .log, .py, .js, .xml, .html
-            - PDF: .pdf (devuelve PDF enmascarado)
-            - DOCX: .docx (devuelve DOCX enmascarado)
-
-            ## Seguridad
+            ## PII Categories
             
-            - 100% local - nada se envia a internet
-            - Modelo en tu PC
-            - Licencia Apache 2.0
+            | Category | Description |
+            |----------|-------------|
+            | PERSON | Person names |
+            | EMAIL | Email addresses |
+            | PHONE | Phone numbers |
+            | ADDRESS | Postal addresses |
+            | DATE | Personal dates |
+            | URL | Web links |
+            | ACCOUNT_NUMBER | Bank accounts, cards |
+            | SECRET | Passwords, API keys |
+            
+            ## Supported Formats
+            
+            - Text: .txt, .md, .csv, .json, .log, .py, .js, .xml, .html
+            - PDF: .pdf (returns redacted PDF)
+            - DOCX: .docx (returns redacted DOCX)
+            
+            ## Security
+            
+            - 100% local - nothing is sent to the internet
+            - Model runs on your PC
+            - Apache 2.0 license
             """)
-            update_btn = gr.Button("Actualizar modelo", variant="secondary")
-            update_msg = gr.Markdown()
-            update_btn.click(fn=update_model, outputs=update_msg)
+            manual_update_btn = gr.Button("Update model", variant="secondary")
+            manual_update_msg = gr.Markdown()
+            manual_update_btn.click(fn=update_model, outputs=manual_update_msg)
+
+        app.load(
+            fn=lambda: None,
+            inputs=None,
+            outputs=None,
+            js="""() => {
+                setTimeout(() => {
+                    const banner = document.querySelector('[data-testid="markdown"]');
+                    if (banner) banner.scrollIntoView({behavior: 'smooth'});
+                }, 3000);
+            }""",
+        )
 
     return app
 
+
+def _start_update_check(app):
+    """Start background update check after a short delay."""
+    def _delayed_check():
+        time.sleep(5)
+        try:
+            from opf._common.update_check import check_for_update
+            info = check_for_update()
+            if info.update_available:
+                date_str = f" ({info.remote_date[:10]})" if info.remote_date else ""
+                banner_text = (
+                    f"### A model update is available{date_str}\n"
+                    f"Current: `{info.local_hash[:8] if info.local_hash else 'unknown'}` | "
+                    f"Latest: `{info.remote_hash[:8] if info.remote_hash else '?'}`"
+                )
+                print(f"[UPDATE] Model update available: {info.remote_hash[:8] if info.remote_hash else '?'}")
+        except Exception:
+            pass
+    threading.Thread(target=_delayed_check, daemon=True).start()
+
+
 if __name__ == "__main__":
     print("=" * 50)
-    print("  Privacy Filter - Interfaz Local")
+    print("  Privacy Filter - Local Interface")
     print("=" * 50)
     print()
-    print("El modelo se cargara la primera vez que uses Detectar.")
+    print("The model will be loaded the first time you use Detect.")
     print()
-    print("Abre http://localhost:7860")
+    print("Open http://localhost:7860")
     print()
 
     app = create_ui()
+    _start_update_check(app)
     app.queue()
     app.launch(server_name="0.0.0.0", server_port=7860, share=False)
 '@
 
     Set-Content -Path $appPath -Value $appContent -Encoding UTF8
-    Write-OK "app_local.py creado"
+    Write-OK "app_local.py created"
 
-    # Crear iniciar.bat
+    # Create iniciar.bat
     $batPath = "$PROJECT_DIR\iniciar.bat"
     $batContent = @"
 @echo off
@@ -736,9 +804,9 @@ echo.
 
 cd /d "%~dp0"
 
-echo Iniciando servidor web...
-echo Abre http://localhost:7860 en tu navegador
-echo Presiona Ctrl+C para detener
+echo Starting web server...
+echo Open http://localhost:7860 in your browser
+echo Press Ctrl+C to stop
 echo.
 
 python app_local.py
@@ -746,7 +814,7 @@ python app_local.py
 pause
 "@
     Set-Content -Path $batPath -Value $batContent -Encoding ASCII
-    Write-OK "iniciar.bat creado"
+    Write-OK "iniciar.bat created"
 }
 
 # ============================================================
@@ -758,83 +826,83 @@ function Main {
 
     Write-Host ""
     Write-Host "================================================================" -ForegroundColor Cyan
-    Write-Host "  OpenAI Privacy Filter - Instalador Completo" -ForegroundColor Cyan
+    Write-Host "  OpenAI Privacy Filter - Complete Installer" -ForegroundColor Cyan
     Write-Host "================================================================" -ForegroundColor Cyan
 
     $startTime = Get-Date
 
-    # FASE 0: Diagnostico inicial
-    Write-Step "FASE 0: DIAGNOSTICO DEL SISTEMA"
+    # PHASE 0: Initial diagnostics
+    Write-Step "PHASE 0: SYSTEM DIAGNOSTICS"
 
-    # Comprobar Python
+    # Check Python
     $py = Test-PythonReal
     if ($py.Found) {
-        Write-OK "Python encontrado: $($py.Version)"
+        Write-OK "Python found: $($py.Version)"
     } else {
-        Write-Warn "Python NO encontrado"
+        Write-Warn "Python NOT found"
     }
 
-    # Comprobar Git
+    # Check Git
     if (Test-CommandExists "git") {
-        Write-OK "Git encontrado: $(git --version)"
+        Write-OK "Git found: $(git --version)"
     } else {
-        Write-Warn "Git NO encontrado"
+        Write-Warn "Git NOT found"
     }
 
-    # Comprobar gestor de paquetes
+    # Check package manager
     if (Test-CommandExists "winget") {
-        Write-OK "winget disponible"
+        Write-OK "winget available"
     } elseif (Test-CommandExists "choco") {
-        Write-OK "chocolatey disponible"
+        Write-OK "chocolatey available"
     } else {
-        Write-Warn "No hay gestor de paquetes (se usara descarga directa)"
+        Write-Warn "No package manager (will use direct download)"
     }
 
-    # FASE 1: Python
+    # PHASE 1: Python
     if (-not $py.Found) {
         if (-not (Install-Python)) {
-            Write-Host "`n[FATAL] No se pudo instalar Python." -ForegroundColor Red
-            Write-Host "Instalalo manualmente: https://www.python.org/downloads/" -ForegroundColor Yellow
-            Write-Host "Marca 'Add Python to PATH'" -ForegroundColor Yellow
+            Write-Host "`n[FATAL] Could not install Python." -ForegroundColor Red
+            Write-Host "Install manually: https://www.python.org/downloads/" -ForegroundColor Yellow
+            Write-Host "Check 'Add Python to PATH'" -ForegroundColor Yellow
             exit 1
         }
     }
 
-    # FASE 2: Git
+    # PHASE 2: Git
     if (-not (Test-CommandExists "git")) {
         if (-not (Install-Git)) {
-            Write-Host "`n[FATAL] No se pudo instalar Git." -ForegroundColor Red
-            Write-Host "Instalalo manualmente: https://git-scm.com/download/win" -ForegroundColor Yellow
+            Write-Host "`n[FATAL] Could not install Git." -ForegroundColor Red
+            Write-Host "Install manually: https://git-scm.com/download/win" -ForegroundColor Yellow
             exit 1
         }
     }
 
-    # FASE 3: Repositorio
+    # PHASE 3: Repository
     if (-not (Clone-Repository)) {
-        Write-Host "`n[FATAL] No se pudo obtener el repositorio." -ForegroundColor Red
+        Write-Host "`n[FATAL] Could not obtain repository." -ForegroundColor Red
         exit 1
     }
 
-    # FASE 4: Dependencias
+    # PHASE 4: Dependencies
     if (-not (Install-Dependencies)) {
-        Write-Host "`n[FATAL] No se pudieron instalar las dependencias." -ForegroundColor Red
+        Write-Host "`n[FATAL] Could not install dependencies." -ForegroundColor Red
         exit 1
     }
 
-    # FASE 5: App
+    # PHASE 5: App
     New-AppLocal
 
     $elapsed = (Get-Date) - $startTime
     Write-Host ""
     Write-Host "================================================================" -ForegroundColor Green
-    Write-Host "  INSTALACION COMPLETADA ($($elapsed.Minutes)m $($elapsed.Seconds)s)" -ForegroundColor Green
+    Write-Host "  INSTALLATION COMPLETE ($($elapsed.Minutes)m $($elapsed.Seconds)s)" -ForegroundColor Green
     Write-Host "================================================================" -ForegroundColor Green
 
-    # FASE 6: Ejecutar
+    # PHASE 6: Run
     if (-not $NoRun) {
         Write-Host ""
-        Write-Host "  Abre http://localhost:7860 en tu navegador" -ForegroundColor Cyan
-        Write-Host "  Presiona Ctrl+C para detener" -ForegroundColor Yellow
+        Write-Host "  Open http://localhost:7860 in your browser" -ForegroundColor Cyan
+        Write-Host "  Press Ctrl+C to stop" -ForegroundColor Yellow
         Write-Host ""
 
         Push-Location $PROJECT_DIR
@@ -842,7 +910,7 @@ function Main {
         Pop-Location
     } else {
         Write-Host ""
-        Write-Host "Para ejecutar:" -ForegroundColor Cyan
+        Write-Host "To run:" -ForegroundColor Cyan
         Write-Host "  cd $PROJECT_DIR" -ForegroundColor White
         Write-Host "  python app_local.py" -ForegroundColor White
         Write-Host ""

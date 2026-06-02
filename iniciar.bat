@@ -9,9 +9,9 @@ echo.
 
 cd /d "%~dp0"
 
-echo Iniciando servidor web...
-echo Abre http://localhost:7860 en tu navegador
-echo Presiona Ctrl+C para detener
+echo Starting web server...
+echo Open http://localhost:7860 in your browser
+echo Press Ctrl+C to stop
 echo.
 
 python app_local.py
