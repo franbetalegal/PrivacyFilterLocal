@@ -410,14 +410,14 @@ def install_app_update(progress=gr.Progress()):
         return "_No update available._"
     
     try:
-        progress((0.1, 1.0), desc="Updating application...")
-        
+        progress(0.1, desc="Updating application...")
+
         # Use git pull if no download URL (ZIP not attached to release)
         if not _app_update_info.download_url:
             import subprocess
             project_dir = Path(__file__).parent
-            
-            progress((0.3, 1.0), desc="Pulling latest code...")
+
+            progress(0.3, desc="Pulling latest code...")
             result = subprocess.run(
                 ["git", "pull", "origin", "main"],
                 cwd=str(project_dir),
@@ -425,11 +425,11 @@ def install_app_update(progress=gr.Progress()):
                 text=True,
                 timeout=60,
             )
-            
+
             if result.returncode != 0:
                 return f"**Git pull failed:** {result.stderr}\n\nPlease update manually:\n```\ncd {project_dir}\ngit pull\n.venv\\Scripts\\pip.exe install -e .\\privacy-filter\n```"
-            
-            progress((0.7, 1.0), desc="Installing dependencies...")
+
+            progress(0.7, desc="Installing dependencies...")
             venv_pip = project_dir / ".venv" / "Scripts" / "pip.exe"
             if venv_pip.exists():
                 subprocess.run(
@@ -438,25 +438,25 @@ def install_app_update(progress=gr.Progress()):
                     capture_output=True,
                     timeout=120,
                 )
-            
-            progress((1.0, 1.0), desc="Done!")
+
+            progress(1.0, desc="Done!")
             from app_update import restart_app
             threading.Timer(2.0, restart_app).start()
             return f"**Updated to v{_app_update_info.latest_version}**\n\nRestarting in 2 seconds..."
-        
+
         # Download ZIP if available
         from app_update import download_and_install_update, restart_app
-        
+
         def update_progress(message, pct):
-            progress((pct, 1.0), desc=message)
-        
+            progress(pct, desc=message)
+
         success, message = download_and_install_update(
             _app_update_info.download_url,
             progress_callback=update_progress,
         )
-        
+
         if success:
-            progress((1.0, 1.0), desc="Done!")
+            progress(1.0, desc="Done!")
             threading.Timer(2.0, restart_app).start()
             return f"**{message}**\n\nRestarting in 2 seconds..."
         else:
@@ -477,7 +477,7 @@ def install_model_update(progress=gr.Progress()):
         from model_update import download_model_update
 
         def update_progress(message, pct):
-            progress((pct, 1.0), desc=message)
+            progress(pct, desc=message)
 
         success, message = download_model_update(
             progress_callback=update_progress,
@@ -489,7 +489,7 @@ def install_model_update(progress=gr.Progress()):
             _model = None
             get_model()
 
-            progress((1.0, 1.0), desc="Done!")
+            progress(1.0, desc="Done!")
             return f"**{message}**"
         else:
             return f"**Update failed:** {message}"

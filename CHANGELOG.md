@@ -5,6 +5,16 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-06-02
+
+### Fixed
+- Update Now button crashed with `pydantic 2.13 ValidationError: index
+  Input should be a valid integer, got a number with a fractional part`
+  because the update flow used the deprecated `progress((X, 1.0), desc=...)`
+  tuple form. Replaced with `progress(X, desc=...)` (single value) in
+  `install_app_update` and `install_model_update`. The 5-step progress in
+  `redact_file` is unaffected (it already used integer indices).
+
 ## [1.3.0] - 2026-06-02
 
 ### Added
