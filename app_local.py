@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import time
 import threading
 from pathlib import Path
@@ -52,11 +52,11 @@ def extract_text_from_pdf(pdf_path):
     try:
         import fitz
         doc = fitz.open(pdf_path)
-        text = ""
-        for page in doc:
-            text += page.get_text() + "\n"
-        doc.close()
-        return text
+        try:
+            pages = [page.get_text() for page in doc]
+        finally:
+            doc.close()
+        return "\n".join(pages)
     except Exception as e:
         print(f"[PDF ERROR] {e}")
     return None
@@ -72,10 +72,13 @@ def extract_text_from_docx(docx_path):
     return None
 
 def redact_pdf(input_path, detected_spans):
-    import fitz
     import os
-    import time
-    out_path = os.path.join(os.environ.get("TEMP", os.path.dirname(input_path)), f"redacted_{int(time.time()*1000)}.pdf")
+    import uuid
+    import fitz
+    out_path = os.path.join(
+        os.environ.get("TEMP", os.path.dirname(input_path)),
+        f"redacted_{uuid.uuid4().hex}.pdf",
+    )
     doc = fitz.open(input_path)
     for page in doc:
         for span in detected_spans:
@@ -96,10 +99,19 @@ def redact_pdf(input_path, detected_spans):
     return out_path
 
 def redact_docx(input_path, detected_spans):
+    """Apply PII redactions to a DOCX while preserving run-level formatting.
+
+    Replaces ``old_text`` with ``new_text`` inside each affected paragraph by
+    splitting the original runs at match boundaries, so the surrounding runs
+    keep their original fonts, sizes, bold/italic flags, etc.
+    """
     import os
-    import time
+    import uuid
     from docx import Document
-    out_path = os.path.join(os.environ.get("TEMP", os.path.dirname(input_path)), f"redacted_{int(time.time()*1000)}.docx")
+    out_path = os.path.join(
+        os.environ.get("TEMP", os.path.dirname(input_path)),
+        f"redacted_{uuid.uuid4().hex}.docx",
+    )
     doc = Document(input_path)
     for span in detected_spans:
         old_text = span.text
@@ -109,49 +121,106 @@ def redact_docx(input_path, detected_spans):
         for para in doc.paragraphs:
             if old_text not in para.text:
                 continue
-            full = para.text
-            new_full = full.replace(old_text, new_text)
-            if full == new_full:
-                continue
-            if len(para.runs) == 0:
-                continue
-            fmt = para.runs[0].font
-            font_name = fmt.name
-            font_size = fmt.size
-            font_bold = fmt.bold
-            font_italic = fmt.italic
-            for run in para.runs:
-                run.text = ""
-            para.runs[0].text = new_full
-            if font_name:
-                para.runs[0].font.name = font_name
-            if font_size:
-                para.runs[0].font.size = font_size
-            if font_bold is not None:
-                para.runs[0].font.bold = font_bold
-            if font_italic is not None:
-                para.runs[0].font.italic = font_italic
+            _replace_text_in_paragraph(para, old_text, new_text)
     doc.save(out_path)
     return out_path
+
+
+def _replace_text_in_paragraph(paragraph, old_text, new_text):
+    """Replace ``old_text`` with ``new_text`` in ``paragraph`` run-by-run.
+
+    Splits runs at the first match boundary so the resulting placeholder sits
+    in its own run; the run-level formatting of the surrounding text is
+    preserved.
+    """
+    full_text = paragraph.text
+    start = full_text.find(old_text)
+    if start < 0:
+        return
+    end = start + len(old_text)
+
+    # Build the new sequence of (text, run_template) for the paragraph.
+    # Each overlapping run produces a leading slice (if any) and a trailing
+    # slice (if any); the placeholder is inserted exactly once for the whole
+    # match even when it spans multiple runs.
+    segments: list[tuple[str, object]] = []
+    cursor = 0
+    placeholder_inserted = False
+    for run in paragraph.runs:
+        run_text = run.text
+        if not run_text:
+            continue
+        run_start = cursor
+        run_end = cursor + len(run_text)
+        if run_end <= start or run_start >= end:
+            segments.append((run_text, run))
+        else:
+            if run_start < start:
+                segments.append((run_text[: start - run_start], run))
+            if not placeholder_inserted:
+                segments.append((new_text, None))
+                placeholder_inserted = True
+            if run_end > end:
+                segments.append((run_text[end - run_start :], run))
+        cursor = run_end
+
+    if not segments:
+        return
+
+    # Find the first run with content to use as the formatting template for
+    # the placeholder.
+    template_for_placeholder = None
+    for run in paragraph.runs:
+        if run.text:
+            template_for_placeholder = run
+            break
+
+    # Clear all original runs.
+    for run in paragraph.runs:
+        run.text = ""
+
+    # Reuse the first run for the first segment, then add new runs for the rest.
+    first_text, first_template = segments[0]
+    paragraph.runs[0].text = first_text
+    if first_template is not None:
+        _copy_font(first_template.font, paragraph.runs[0].font)
+
+    for text, template in segments[1:]:
+        new_run = paragraph.add_run(text)
+        if template is not None:
+            _copy_font(template.font, new_run.font)
+        elif template_for_placeholder is not None:
+            _copy_font(template_for_placeholder.font, new_run.font)
+
+
+def _copy_font(src_font, dst_font):
+    """Copy font attributes from ``src_font`` to ``dst_font`` if set."""
+    if src_font.name:
+        dst_font.name = src_font.name
+    if src_font.size:
+        dst_font.size = src_font.size
+    if src_font.bold is not None:
+        dst_font.bold = src_font.bold
+    if src_font.italic is not None:
+        dst_font.italic = src_font.italic
 
 def redact_text(text):
     if not text or not text.strip():
         return "", "Enter some text."
     try:
         model = get_model()
-        if model is None:
-            return text, "Loading model..."
         start = time.time()
         result = model.redact(text)
         elapsed = time.time() - start
         redacted = result.redacted_text if hasattr(result, 'redacted_text') else str(result)
         spans = result.detected_spans if hasattr(result, 'detected_spans') else []
         if spans:
-            summary = f"**{len(spans)} entities detected** ({elapsed:.1f}s)\n\n"
-            for s in spans:
-                label = s.label if hasattr(s, 'label') else "?"
-                txt = s.text if hasattr(s, 'text') else ""
-                summary += f"- `{label}`: {txt}\n"
+            lines = [f"**{len(spans)} entities detected** ({elapsed:.1f}s)", ""]
+            lines.extend(
+                f"- `{s.label if hasattr(s, 'label') else '?'}`: {s.text if hasattr(s, 'text') else ''}"
+                for s in spans
+            )
+            summary = "\n".join(lines)
         else:
             summary = f"_No PII entities detected_ ({elapsed:.1f}s)"
         return redacted, summary
@@ -164,8 +233,6 @@ def redact_file(file, progress=gr.Progress()):
     try:
         progress((0, 5), desc="Loading model...")
         model = get_model()
-        if model is None:
-            return "_Loading model..._", None
 
         progress((1, 5), desc="Reading file...")
         path = Path(file.name)
@@ -185,45 +252,45 @@ def redact_file(file, progress=gr.Progress()):
         start = time.time()
         result = model.redact(text)
         elapsed = time.time() - start
-        redacted = result.redacted_text if hasattr(result, 'redacted_text') else str(result)
         spans = result.detected_spans if hasattr(result, 'detected_spans') else []
 
         progress((3, 5), desc="Generating redacted output...")
-        legend = f"### Redaction Result\n\n"
-        legend += f"Processed in **{elapsed:.1f}s** -- **{len(spans)}** entities detected\n\n"
+        legend_parts = [
+            "### Redaction Result",
+            "",
+            f"Processed in **{elapsed:.1f}s** -- **{len(spans)}** entities detected",
+            "",
+        ]
         if spans:
-            legend += "| # | Type | Original | Replacement |\n"
-            legend += "|--:|------|----------|----------|\n"
+            legend_parts.append("| # | Type | Original | Replacement |")
+            legend_parts.append("|--:|------|----------|------------|")
             for i, s in enumerate(spans, 1):
-                label = s.label if hasattr(s, 'label') else "?"
-                txt = s.text if hasattr(s, 'text') else ""
-                ph = s.placeholder if hasattr(s, 'placeholder') else ""
-                legend += f"| {i} | `{label}` | {txt} | {ph} |\n"
+                label = s.label if hasattr(s, "label") else "?"
+                txt = s.text if hasattr(s, "text") else ""
+                ph = s.placeholder if hasattr(s, "placeholder") else ""
+                legend_parts.append(f"| {i} | `{label}` | {txt} | {ph} |")
         else:
-            legend += "_No PII entities detected._"
+            legend_parts.append("_No PII entities detected._")
+        legend = "\n".join(legend_parts)
 
         progress((4, 5), desc="Creating output file...")
+        out_path = None
         if ext == ".pdf" and spans:
-            pdf_path = redact_pdf(str(path), spans)
-            progress((5, 5), desc="Done")
-            return legend, pdf_path
-        if ext == ".docx" and spans:
-            docx_path = redact_docx(str(path), spans)
-            progress((5, 5), desc="Done")
-            return legend, docx_path
+            out_path = redact_pdf(str(path), spans)
+        elif ext == ".docx" and spans:
+            out_path = redact_docx(str(path), spans)
         progress((5, 5), desc="Done")
-        return legend, None
+        return legend, out_path
     except Exception as e:
-        return f"**Error:** {e}"
+        return f"**Error:** {e}", None
 
 
-# ============================================================
-#  APP UPDATE FUNCTIONS
 # ============================================================
 #  APP UPDATE FUNCTIONS
 # ============================================================
 
 _app_update_info = None
+
 
 def _check_app_update_background():
     """Background thread that checks for app updates."""
@@ -231,10 +298,14 @@ def _check_app_update_background():
     try:
         from app_update import check_for_app_update
         _app_update_info = check_for_app_update()
-        if _app_update_info.update_available:
-            print(f"[UPDATE] App update available: v{_app_update_info.current_version} -> v{_app_update_info.latest_version}")
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[UPDATE] App update check failed: {exc}")
+        return
+    if _app_update_info.update_available:
+        print(
+            f"[UPDATE] App update available: "
+            f"v{_app_update_info.current_version} -> v{_app_update_info.latest_version}"
+        )
 
 
 # ============================================================
@@ -243,16 +314,21 @@ def _check_app_update_background():
 
 _model_update_info = None
 
+
 def _check_model_update_background():
     """Background thread that checks for model updates."""
     global _model_update_info
     try:
         from model_update import check_for_model_update
         _model_update_info = check_for_model_update()
-        if _model_update_info.update_available:
-            print(f"[UPDATE] Model update available: {_model_update_info.current_date} -> {_model_update_info.latest_date}")
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[UPDATE] Model update check failed: {exc}")
+        return
+    if _model_update_info.update_available:
+        print(
+            f"[UPDATE] Model update available: "
+            f"{_model_update_info.current_date} -> {_model_update_info.latest_date}"
+        )
 
 def install_app_update(progress=gr.Progress()):
     """Download and install the app update."""
@@ -350,6 +426,11 @@ def install_model_update(progress=gr.Progress()):
         return f"**Error:** {e}"
 
 
+def _hide_three():
+    """Return three Gradio updates that hide their respective widgets."""
+    return (gr.update(visible=False),) * 3
+
+
 def create_ui():
     with gr.Blocks(title="Privacy Filter - Local") as app:
         # Read current version
@@ -381,18 +462,14 @@ def create_ui():
             )
         
         update_msg = gr.Markdown()
-        
+
         update_btn.click(
             fn=install_app_update,
             outputs=update_msg,
         )
-        
+
         later_btn.click(
-            fn=lambda: (
-                gr.update(visible=False),
-                gr.update(visible=False),
-                gr.update(visible=False),
-            ),
+            fn=_hide_three,
             outputs=[update_banner, update_btn, later_btn],
         )
 
@@ -425,11 +502,7 @@ def create_ui():
         )
 
         model_later_btn.click(
-            fn=lambda: (
-                gr.update(visible=False),
-                gr.update(visible=False),
-                gr.update(visible=False),
-            ),
+            fn=_hide_three,
             outputs=[model_update_banner, model_update_btn, model_later_btn],
         )
 
@@ -499,68 +572,61 @@ def create_ui():
 
         # Load update check on app start
         def check_and_update_banner():
-            """Check for updates and return banner content."""
-            global _app_update_info
-            global _model_update_info
-            
-            # Wait for background checks to complete
-            for _ in range(50):  # Wait up to 5 seconds
+            """Wait for update checks, then return banner widget updates."""
+            _wait_for_update_info()
+
+            return (
+                *_build_app_banner_updates(),
+                *_build_model_banner_updates(),
+            )
+
+        def _wait_for_update_info(timeout_seconds: float = 5.0) -> None:
+            """Block until both background update checks have completed."""
+            deadline = time.time() + timeout_seconds
+            while time.time() < deadline:
                 if _app_update_info is not None and _model_update_info is not None:
-                    break
+                    return
                 time.sleep(0.1)
-            
-            # App update banner
-            if _app_update_info is None or not _app_update_info.update_available:
-                app_banner_update = (
-                    gr.update(visible=False),
-                    gr.update(visible=False),
-                    gr.update(visible=False),
-                )
+
+        def _build_app_banner_updates():
+            """Return the three Gradio updates for the app-update banner."""
+            info = _app_update_info
+            if info is None or not info.update_available:
+                return (gr.update(visible=False),) * 3
+            changelog_lines = info.changelog.split("\n") if info.changelog else []
+            if len(changelog_lines) > 20:
+                changelog = "\n".join(changelog_lines[:20]) + "\n\n..."
             else:
-                # Format changelog
-                changelog = _app_update_info.changelog
-                if changelog:
-                    # Trim long changelogs
-                    lines = changelog.split("\n")
-                    if len(lines) > 20:
-                        changelog = "\n".join(lines[:20]) + "\n\n..."
-                
-                date_str = f" ({_app_update_info.published_date})" if _app_update_info.published_date else ""
-                banner_text = f"""### A new version is available: v{_app_update_info.current_version} \u2192 v{_app_update_info.latest_version}{date_str}
+                changelog = info.changelog or "No changelog available."
+            date_str = f" ({info.published_date})" if info.published_date else ""
+            banner_text = (
+                f"### A new version is available: "
+                f"v{info.current_version} \u2192 v{info.latest_version}{date_str}\n\n"
+                f"**What's New:**\n\n{changelog}\n"
+            )
+            return (
+                gr.update(value=banner_text, visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+            )
 
-**What's New:**
+        def _build_model_banner_updates():
+            """Return the three Gradio updates for the model-update banner."""
+            info = _model_update_info
+            if info is None or not info.update_available:
+                return (gr.update(visible=False),) * 3
+            current_date = info.current_date or "unknown"
+            latest_date = info.latest_date or "unknown"
+            banner_text = (
+                "### New PII model update available\n\n"
+                f"Current: {current_date} \u2192 Latest: {latest_date}\n"
+            )
+            return (
+                gr.update(value=banner_text, visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+            )
 
-{changelog if changelog else "No changelog available."}
-"""
-                
-                app_banner_update = (
-                    gr.update(value=banner_text, visible=True),
-                    gr.update(visible=True),
-                    gr.update(visible=True),
-                )
-            
-            # Model update banner
-            if _model_update_info is None or not _model_update_info.update_available:
-                model_banner_update = (
-                    gr.update(visible=False),
-                    gr.update(visible=False),
-                    gr.update(visible=False),
-                )
-            else:
-                current_date = _model_update_info.current_date or "unknown"
-                latest_date = _model_update_info.latest_date or "unknown"
-                model_banner_text = f"""### New PII model update available
-
-Current: {current_date} \u2192 Latest: {latest_date}
-"""
-                model_banner_update = (
-                    gr.update(value=model_banner_text, visible=True),
-                    gr.update(visible=True),
-                    gr.update(visible=True),
-                )
-            
-            return app_banner_update + model_banner_update
-        
         app.load(
             fn=check_and_update_banner,
             outputs=[update_banner, update_btn, later_btn, model_update_banner, model_update_btn, model_later_btn],

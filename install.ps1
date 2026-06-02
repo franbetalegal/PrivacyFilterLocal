@@ -9,14 +9,23 @@
     Force reinstallation/overwrite of existing files.
 .PARAMETER NoRun
     Install only, do not launch the application.
+.PARAMETER PythonVersion
+    Python version to download when not already installed (e.g. "3.12.8").
+.PARAMETER GitVersion
+    Git for Windows version to download when not already installed, in the
+    format "X.Y.Z.W" where the trailing number is the Windows build number
+    (e.g. "2.47.1.2"). The release tag is derived as "vX.Y.Z.windows.W".
 .EXAMPLE
     .\install.ps1
     .\install.ps1 -Force
+    .\install.ps1 -PythonVersion "3.12.10" -GitVersion "2.48.1.1"
 #>
 
 param(
     [switch]$Force,
-    [switch]$NoRun
+    [switch]$NoRun,
+    [string]$PythonVersion = "3.12.8",
+    [string]$GitVersion = "2.47.1.2"
 )
 
 $ErrorActionPreference = "Continue"
@@ -29,8 +38,8 @@ $ProgressPreference = "SilentlyContinue"
 $PROJECT_DIR = "C:\privacy-filter"
 $REPO_DIR = "$PROJECT_DIR\privacy-filter"
 $REPO_URL = "https://github.com/franbetalegal/PrivacyFilterLocal.git"
-$PYTHON_URL = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe"
-$PYTHON_INSTALLER = "$env:TEMP\python-installer-312.exe"
+$PYTHON_URL = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-amd64.exe"
+$PYTHON_INSTALLER = "$env:TEMP\python-installer-$($PythonVersion -replace '\.','').exe"
 
 # ============================================================
 #  LOG FUNCTIONS
@@ -179,7 +188,11 @@ function Install-Git {
     }
 
     Write-Info "Downloading Git..."
-    $gitUrl = "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.2/Git-2.47.1.2-64-bit.exe"
+    # GitVersion format: "X.Y.Z.W" (semver + Windows build number).
+    # Tag:   vX.Y.Z.windows.W
+    # Asset: Git-X.Y.Z.W-64-bit.exe
+    $gitSemver = $GitVersion -replace '\.\d+$', ''
+    $gitUrl = "https://github.com/git-for-windows/git/releases/download/v$gitSemver.windows.$($GitVersion -replace '.*\.', '')/Git-$GitVersion-64-bit.exe"
     $gitInstaller = "$env:TEMP\git-installer.exe"
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -356,28 +369,25 @@ function Install-Dependencies {
         Write-Info $output
     }
 
-    # Web interface dependencies
+    # Web interface dependencies.
+    # Only packages NOT covered by pyproject.toml are listed here, and they
+    # are installed with a minimum-version specifier (or unpinned) so the
+    # resolver can pick up security patches.
     Write-Info "Installing web interface dependencies..."
     $webDeps = @(
-        "gradio==4.44.0",
-        "gradio_client==1.3.0",
-        "huggingface_hub==0.24.0",
-        "fastapi==0.109.2",
-        "starlette==0.36.3",
-        "jinja2==3.1.6",
-        "pydantic==2.13.4",
-        "pydantic_core==2.46.4",
-        "safetensors",
-        "tiktoken",
+        "gradio>=4.44.0",
+        "gradio_client>=1.3.0",
         "PyMuPDF",
         "python-docx"
     )
     foreach ($dep in $webDeps) {
-        & $venvPip install $dep 2>&1 | Out-Null
+        $output = & $venvPip install $dep 2>&1 | Out-String
         if ($LASTEXITCODE -eq 0) {
             Write-OK "$dep installed"
         } else {
-            Write-Warn "Error installing $dep"
+            Write-Fail "Error installing $dep"
+            Write-Info $output
+            return $false
         }
     }
 

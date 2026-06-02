@@ -36,3 +36,7 @@ desktop.ini
 *.tmp
 *.temp
 .update_temp/
+
+# Agent skills (local-only, synced via opencode, not part of the repo)
+.agents/
+skills-lock.json
