@@ -1,6 +1,6 @@
 @echo off
 echo ========================================
-echo   OpenAI Privacy Filter - Installer
+echo   Privacy Filter - Installer
 echo ========================================
 echo.
 echo Running installer...

@@ -7,11 +7,17 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.request import urlopen, Request
 from urllib.error import URLError
+
+# Ensure privacy-filter package is importable
+_PRIVACY_FILTER_DIR = str(Path(__file__).parent / "privacy-filter")
+if _PRIVACY_FILTER_DIR not in sys.path:
+    sys.path.insert(0, _PRIVACY_FILTER_DIR)
 
 
 HF_MODEL_REPO = "openai/privacy-filter"
@@ -164,8 +170,6 @@ def download_model_update(
             progress_callback("Downloading new model...", 0.3)
 
         # Import and use the existing checkpoint download
-        import sys
-        sys.path.insert(0, str(Path(__file__).parent / "privacy-filter"))
         from opf._common.checkpoint_download import ensure_default_checkpoint
 
         if progress_callback:

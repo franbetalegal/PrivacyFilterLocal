@@ -5,6 +5,34 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-06-02
+
+### Added
+- Virtual environment support for clean dependency isolation
+- `uninstall.bat` for easy removal
+- `.gitignore` to exclude sensitive files from version control
+- Better error handling for PDF extraction
+- Text file encoding fallback for non-UTF-8 files
+
+### Changed
+- Installer now clones from `franbetalegal/PrivacyFilterLocal` (not `openai/privacy-filter`)
+- Dependencies are installed in `.venv/` instead of globally
+- `start.bat` uses virtual environment Python
+- App updates now include `app_local.py` (removed from preserve list)
+- `create_release.py` reads version from `VERSION` file automatically
+
+### Fixed
+- Removed duplicate `update_model()` function (use `install_model_update()` instead)
+- Removed unused `Pt` import from `docx.shared`
+- Fixed `except: pass` in PDF extraction to log errors
+- Fixed `model_update.py` sys.path manipulation (moved to module level)
+- Fixed `create_release.py` to read from `.env` without insecure git credential fallback
+- Fixed thread safety for model update state
+
+### Removed
+- `install.ps1` no longer generates `app_local.py` (uses repo version)
+- Removed Spanish language examples from generated code
+
 ## [1.0.0] - 2026-06-02
 
 ### Added
@@ -48,14 +76,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ```bash
 cd C:\privacy-filter
 git pull
-pip install -e .
+.venv\Scripts\pip.exe install -e .\privacy-filter
 ```
 
 ### Creating a New Release
 ```bash
-# Update VERSION file and create GitHub Release
-python create_release.py 1.2.0 --changelog-file CHANGELOG.md
+# Set your GitHub token
+$env:GITHUB_TOKEN = "your-token-here"
 
-# Or with inline changelog
-python create_release.py 1.2.0 --changelog "## What's New\n• Feature X\n• Feature Y"
+# Create release (reads VERSION and CHANGELOG.md automatically)
+python create_release.py
 ```

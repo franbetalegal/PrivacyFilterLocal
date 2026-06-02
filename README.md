@@ -31,19 +31,26 @@ install.bat
 This will automatically:
 1. Install Python 3.12 (if not present)
 2. Install Git (if not present)
-3. Clone the repository
-4. Install all dependencies
-5. Launch the web interface
+3. Clone the repository to `C:\privacy-filter`
+4. Create a Python virtual environment
+5. Install all dependencies
+6. Launch the web interface
 
 ### Option 2: Manual installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/openai/privacy-filter.git
-cd privacy-filter
+git clone https://github.com/franbetalegal/PrivacyFilterLocal.git C:\privacy-filter
+cd C:\privacy-filter
+
+# Create virtual environment
+python -m venv .venv
+.venv\Scripts\activate
 
 # Install the package
+cd privacy-filter
 pip install -e .
+cd ..
 
 # Install web interface dependencies
 pip install gradio==4.44.0 gradio_client==1.3.0 PyMuPDF python-docx
@@ -75,19 +82,22 @@ opf redact
 ## Project Structure
 
 ```
-privacy-filter/
-├── app_local.py          # Web interface
-├── app_update.py         # Auto-update module
-├── create_release.py     # Release creation script
-├── VERSION               # Current version number
-├── CHANGELOG.md          # Version history
-├── start.bat             # Launch script
-├── install.bat           # Installer launcher
-├── install.ps1           # Full installer
-└── privacy-filter/       # Core OPF package
-    ├── opf/              # Main package
-    ├── pyproject.toml    # Package config
-    └── examples/         # Demo data and scripts
+C:\privacy-filter\
+├── .venv/                  # Python virtual environment
+├── app_local.py            # Web interface
+├── app_update.py           # Auto-update module (app)
+├── model_update.py         # Auto-update module (model)
+├── create_release.py       # Release creation script
+├── start.bat               # Launch script
+├── install.bat             # Installer launcher
+├── install.ps1             # Full installer
+├── uninstall.bat           # Uninstaller
+├── VERSION                 # Current version number
+├── CHANGELOG.md            # Version history
+└── privacy-filter/         # Core OPF package
+    ├── opf/                # Main package
+    ├── pyproject.toml      # Package config
+    └── examples/           # Demo data and scripts
 ```
 
 ## Updating
@@ -107,20 +117,17 @@ The application automatically checks for updates when launched. If an update is 
 ```bash
 cd C:\privacy-filter
 git pull
-pip install -e .
+.venv\Scripts\pip.exe install -e .\privacy-filter
 ```
 
 ### Creating a New Release
 
 ```bash
-# Update VERSION file and create GitHub Release
-python create_release.py 1.2.0 --changelog-file CHANGELOG.md
+# Set your GitHub token
+$env:GITHUB_TOKEN = "your-token-here"
 
-# Or with inline changelog
-python create_release.py 1.2.0 --changelog "## What's New\n• Feature X\n• Feature Y"
-
-# Dry run (no actual release created)
-python create_release.py 1.2.0 --changelog "Test" --dry-run
+# Create release (reads VERSION and CHANGELOG.md automatically)
+python create_release.py
 ```
 
 ## Version History
@@ -135,6 +142,10 @@ The application checks for updates from two sources:
 2. **App Updates** (GitHub Releases): Checks for newer application versions with changelog
 
 Both checks are silent and only show notifications when updates are available.
+
+## Uninstall
+
+Run `uninstall.bat` to remove the application. Optionally remove the cached model from `~\.opf\privacy_filter`.
 
 ## License
 

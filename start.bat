@@ -9,11 +9,19 @@ echo.
 
 cd /d "%~dp0"
 
+if not exist ".venv\Scripts\python.exe" (
+    echo [ERROR] Virtual environment not found.
+    echo Run install.bat first to set up the application.
+    echo.
+    pause
+    exit /b 1
+)
+
 echo Starting web server...
 echo Open http://localhost:7860 in your browser
 echo Press Ctrl+C to stop
 echo.
 
-python app_local.py
+.venv\Scripts\python.exe app_local.py
 
 pause

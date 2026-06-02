@@ -24,7 +24,6 @@ VERSION_FILE = Path(__file__).parent.parent / "VERSION"
 
 # Files/dirs to preserve during update (user config)
 PRESERVE_LIST = {
-    "app_local.py",
     "start.bat",
     ".env",
     ".git",

@@ -57,8 +57,8 @@ def extract_text_from_pdf(pdf_path):
             text += page.get_text() + "\n"
         doc.close()
         return text
-    except:
-        pass
+    except Exception as e:
+        print(f"[PDF ERROR] {e}")
     return None
 
 def extract_text_from_docx(docx_path):
@@ -99,7 +99,6 @@ def redact_docx(input_path, detected_spans):
     import os
     import time
     from docx import Document
-    from docx.shared import Pt
     out_path = os.path.join(os.environ.get("TEMP", os.path.dirname(input_path)), f"redacted_{int(time.time()*1000)}.docx")
     doc = Document(input_path)
     for span in detected_spans:
@@ -180,7 +179,7 @@ def redact_file(file, progress=gr.Progress()):
             if text is None:
                 return "**Error** reading DOCX. Check the console.", None
         else:
-            text = path.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8", errors="replace")
 
         progress((2, 5), desc="Detecting PII...")
         start = time.time()
@@ -215,28 +214,11 @@ def redact_file(file, progress=gr.Progress()):
         progress((5, 5), desc="Done")
         return legend, None
     except Exception as e:
-        return f"**Error:** {e}", None
-
-def update_model(progress=gr.Progress()):
-    global _model
-    try:
-        import shutil
-        from pathlib import Path as _P
-        model_dir = _P.home() / ".opf" / "privacy_filter"
-        if not model_dir.exists():
-            progress((1, 3), desc="No cached model, will download on first use.")
-            return "_No local model found. It will be downloaded automatically the first time you use Detect._"
-        progress((1, 3), desc="Removing current model...")
-        shutil.rmtree(str(model_dir))
-        progress((2, 3), desc="Downloading updated model...")
-        _model = None
-        get_model()
-        progress((3, 3), desc="Done")
-        return "_Model updated successfully._"
-    except Exception as e:
-        return f"**Error** updating: {e}"
+        return f"**Error:** {e}"
 
 
+# ============================================================
+#  APP UPDATE FUNCTIONS
 # ============================================================
 #  APP UPDATE FUNCTIONS
 # ============================================================
@@ -482,7 +464,7 @@ def create_ui():
             """)
             manual_update_btn = gr.Button("Update model", variant="secondary")
             manual_update_msg = gr.Markdown()
-            manual_update_btn.click(fn=update_model, outputs=manual_update_msg)
+            manual_update_btn.click(fn=install_model_update, outputs=manual_update_msg)
 
         # Load update check on app start
         def check_and_update_banner():
