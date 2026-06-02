@@ -287,11 +287,23 @@ def download_and_install_update(
 
 def restart_app() -> None:
     """Restart the application."""
-    python = sys.executable
-    script = Path(__file__).parent / "app_local.py"
+    import subprocess
+    import time
     
-    # Start new process
-    os.startfile(str(script))
+    project_dir = Path(__file__).parent
+    script = project_dir / "app_local.py"
+    venv_python = project_dir / ".venv" / "Scripts" / "python.exe"
+    
+    python = str(venv_python) if venv_python.exists() else sys.executable
+    
+    # Start new process detached
+    subprocess.Popen(
+        [python, str(script)],
+        cwd=str(project_dir),
+        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        close_fds=True,
+    )
     
     # Exit current process
-    sys.exit(0)
+    time.sleep(0.5)
+    os._exit(0)

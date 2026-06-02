@@ -582,10 +582,22 @@ if __name__ == "__main__":
     print()
     print("The model will be loaded the first time you use Detect.")
     print()
-    print("Open http://localhost:7860")
-    print()
 
     app = create_ui()
     _start_update_check(app)
     app.queue()
-    app.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    
+    # Try port 7860, if busy try next ports
+    port = 7860
+    max_port = 7870
+    while port <= max_port:
+        try:
+            app.launch(server_name="0.0.0.0", server_port=port, share=False)
+            print(f"\nOpen http://localhost:{port}")
+            break
+        except OSError as e:
+            if "already in use" in str(e) or "10048" in str(e):
+                print(f"Port {port} in use, trying {port + 1}...")
+                port += 1
+            else:
+                raise
