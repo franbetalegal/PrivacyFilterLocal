@@ -5,6 +5,40 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-06-02
+
+### Added
+- Visible "Click the file above to download it." hint in the Files tab when
+  a redacted PDF/DOCX is ready, so the download affordance is obvious
+- `app_local.get_model()` now auto-recovers from a partial or missing
+  checkpoint by transparently re-downloading the model on next launch
+- `install.ps1` accepts `-PythonVersion` and `-GitVersion` parameters so the
+  pinned versions can be overridden without editing the script
+
+### Changed
+- Refactored `app_local.py` for cleaner code: drop UTF-8 BOM, optimize
+  `extract_text_from_pdf` to O(n) with `list + join`, rewrite `redact_docx`
+  to preserve run-level formatting across multi-run PII spans, use
+  `uuid.uuid4` for unique redacted output filenames, and split the update
+  banner logic into focused helpers
+- `install.ps1` no longer re-installs dependencies already covered by
+  `pyproject.toml` (huggingface_hub, safetensors, tiktoken, fastapi,
+  starlette, jinja2, pydantic, pydantic_core) and switches gradio /
+  gradio_client to a pinned exact version to avoid a known tab-switching
+  freeze in 4.45+ and 5.x
+
+### Fixed
+- Model update flow is now atomic: the new checkpoint is downloaded to a
+  temporary directory and only swapped into place after it validates, so a
+  network blip or app close mid-update can no longer leave the user with
+  a broken `~/.opf/privacy_filter`
+- `gr.update` callbacks for the update banners no longer swallow exceptions
+  silently; failures are logged to the console
+
+### Removed
+- Unused `privacy-filter/opf/_common/update_check.py` (no references in the
+  package)
+
 ## [1.2.3] - 2026-06-02
 
 ### Fixed
