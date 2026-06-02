@@ -261,10 +261,42 @@ def install_app_update(progress=gr.Progress()):
     if not _app_update_info or not _app_update_info.update_available:
         return "_No update available._"
     
-    if not _app_update_info.download_url:
-        return "_No download URL found for this update._"
-    
     try:
+        progress((0.1, 1.0), desc="Updating application...")
+        
+        # Use git pull if no download URL (ZIP not attached to release)
+        if not _app_update_info.download_url:
+            import subprocess
+            project_dir = Path(__file__).parent
+            
+            progress((0.3, 1.0), desc="Pulling latest code...")
+            result = subprocess.run(
+                ["git", "pull", "origin", "main"],
+                cwd=str(project_dir),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            
+            if result.returncode != 0:
+                return f"**Git pull failed:** {result.stderr}\n\nPlease update manually:\n```\ncd {project_dir}\ngit pull\n.venv\\Scripts\\pip.exe install -e .\\privacy-filter\n```"
+            
+            progress((0.7, 1.0), desc="Installing dependencies...")
+            venv_pip = project_dir / ".venv" / "Scripts" / "pip.exe"
+            if venv_pip.exists():
+                subprocess.run(
+                    [str(venv_pip), "install", "-e", str(project_dir / "privacy-filter")],
+                    cwd=str(project_dir),
+                    capture_output=True,
+                    timeout=120,
+                )
+            
+            progress((1.0, 1.0), desc="Done!")
+            from app_update import restart_app
+            threading.Timer(2.0, restart_app).start()
+            return f"**Updated to v{_app_update_info.latest_version}**\n\nRestarting in 2 seconds..."
+        
+        # Download ZIP if available
         from app_update import download_and_install_update, restart_app
         
         def update_progress(message, pct):
@@ -277,11 +309,10 @@ def install_app_update(progress=gr.Progress()):
         
         if success:
             progress((1.0, 1.0), desc="Done!")
-            # Schedule restart after 2 seconds
             threading.Timer(2.0, restart_app).start()
             return f"**{message}**\n\nRestarting in 2 seconds..."
         else:
-            return f"**Update failed:** {message}\n\nPlease update manually:\n```\ncd {Path(__file__).parent}\ngit pull\npip install -e .\n```"
+            return f"**Update failed:** {message}\n\nPlease update manually:\n```\ncd {Path(__file__).parent}\ngit pull\n.venv\\Scripts\\pip.exe install -e .\\privacy-filter\n```"
     
     except Exception as e:
         return f"**Error:** {e}"

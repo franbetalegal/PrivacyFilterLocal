@@ -20,7 +20,7 @@ from urllib.error import URLError
 
 GITHUB_REPO = "franbetalegal/PrivacyFilterLocal"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-VERSION_FILE = Path(__file__).parent.parent / "VERSION"
+VERSION_FILE = Path(__file__).parent / "VERSION"
 
 # Files/dirs to preserve during update (user config)
 PRESERVE_LIST = {
@@ -107,7 +107,7 @@ def check_for_app_update() -> AppUpdateInfo:
         changelog = data.get("body", "") or ""
         published_date = data.get("published_at", "")[:10] if data.get("published_at") else ""
         
-        # Find ZIP asset
+        # Find ZIP asset (optional - if not found, use git pull)
         download_url = ""
         for asset in data.get("assets", []):
             if asset.get("name", "").endswith(".zip"):
