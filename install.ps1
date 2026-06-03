@@ -356,6 +356,20 @@ function Install-Dependencies {
     & $venvPython -m pip install --upgrade pip 2>&1 | Out-Null
     Write-OK "pip updated"
 
+    # Pre-install the CPU-only build of torch. The app runs inference on CPU
+    # (app_local.py: OPF(device="cpu")), so this guarantees the smallest, most
+    # reproducible wheel and avoids ever pulling the much larger CUDA build.
+    # Installing it first means the editable install below sees torch already
+    # satisfied and won't re-resolve it.
+    Write-Info "Installing CPU-only PyTorch..."
+    $output = & $venvPip install torch --index-url https://download.pytorch.org/whl/cpu 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0) {
+        Write-OK "CPU-only PyTorch installed"
+    } else {
+        Write-Warn "Could not pre-install CPU torch; falling back to default index"
+        Write-Info $output
+    }
+
     # Install project in editable mode
     Write-Info "Installing project dependencies..."
     Push-Location $PROJECT_DIR\privacy-filter
@@ -370,24 +384,21 @@ function Install-Dependencies {
     }
 
     # Web interface dependencies.
-    # Only packages NOT covered by pyproject.toml are listed here.
-    # Gradio 6.15.1 is the latest stable version with all tab-switching
-    # bugs fixed and security vulnerabilities resolved.
+    # Pinned in requirements-web.txt (single source of truth) so the installer
+    # and a manual `pip install -r requirements-web.txt` never drift apart.
     Write-Info "Installing web interface dependencies..."
-    $webDeps = @(
-        "gradio==6.15.1",
-        "PyMuPDF",
-        "python-docx"
-    )
-    foreach ($dep in $webDeps) {
-        $output = & $venvPip install $dep 2>&1 | Out-String
-        if ($LASTEXITCODE -eq 0) {
-            Write-OK "$dep installed"
-        } else {
-            Write-Fail "Error installing $dep"
-            Write-Info $output
-            return $false
-        }
+    $webReqs = "$PROJECT_DIR\requirements-web.txt"
+    if (-not (Test-Path $webReqs)) {
+        Write-Fail "requirements-web.txt not found at $webReqs"
+        return $false
+    }
+    $output = & $venvPip install -r $webReqs 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0) {
+        Write-OK "Web interface dependencies installed"
+    } else {
+        Write-Fail "Error installing web interface dependencies"
+        Write-Info $output
+        return $false
     }
 
     return $true

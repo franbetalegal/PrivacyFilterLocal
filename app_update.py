@@ -6,6 +6,7 @@ Downloads updates from GitHub Releases and installs them automatically.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import sys
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.request import urlopen, Request
 from urllib.error import URLError
+
+logger = logging.getLogger("privacy_filter.app_update")
 
 
 GITHUB_REPO = "franbetalegal/PrivacyFilterLocal"
@@ -43,8 +46,8 @@ def get_local_version() -> str:
     try:
         if VERSION_FILE.is_file():
             return VERSION_FILE.read_text(encoding="utf-8").strip()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read local version: %s", exc)
     return "0.0.0"
 
 
@@ -79,11 +82,11 @@ class AppUpdateInfo:
     """Information about an available app update."""
     update_available: bool
     current_version: str
-    latest_version: str
-    changelog: str
-    download_url: str
-    published_date: str
-    error: Optional[str]
+    latest_version: str = ""
+    changelog: str = ""
+    download_url: str = ""
+    published_date: str = ""
+    error: Optional[str] = None
 
 
 def check_for_app_update() -> AppUpdateInfo:
@@ -116,17 +119,11 @@ def check_for_app_update() -> AppUpdateInfo:
         
         if not latest_version:
             return AppUpdateInfo(
-                update_available=False,
-                current_version=current_version,
-                latest_version="",
-                changelog="",
-                download_url="",
-                published_date="",
-                error="No version found in release",
+                False, current_version, error="No version found in release"
             )
-        
+
         update_available = compare_versions(current_version, latest_version) < 0
-        
+
         return AppUpdateInfo(
             update_available=update_available,
             current_version=current_version,
@@ -134,29 +131,12 @@ def check_for_app_update() -> AppUpdateInfo:
             changelog=changelog,
             download_url=download_url,
             published_date=published_date,
-            error=None,
         )
-    
+
     except URLError as exc:
-        return AppUpdateInfo(
-            update_available=False,
-            current_version=current_version,
-            latest_version="",
-            changelog="",
-            download_url="",
-            published_date="",
-            error=f"Network error: {exc}",
-        )
+        return AppUpdateInfo(False, current_version, error=f"Network error: {exc}")
     except Exception as exc:
-        return AppUpdateInfo(
-            update_available=False,
-            current_version=current_version,
-            latest_version="",
-            changelog="",
-            download_url="",
-            published_date="",
-            error=str(exc),
-        )
+        return AppUpdateInfo(False, current_version, error=str(exc))
 
 
 def download_and_install_update(

@@ -1,3 +1,4 @@
+import logging
 import sys
 import time
 import threading
@@ -9,12 +10,32 @@ sys.path.insert(0, str(REPO_DIR))
 
 import gradio as gr
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("privacy_filter")
+
 _model = None
 
 
 def _checkpoint_dir() -> Path:
     """Return the default OPF checkpoint directory."""
     return Path.home() / ".opf" / "privacy_filter"
+
+
+def _temp_output_path(input_path: str, ext: str) -> str:
+    """Return a unique path under TEMP for a redacted output file.
+
+    Falls back to the input file's directory when TEMP is unavailable.
+    ``ext`` is the suffix including the leading dot (e.g. ``".pdf"``).
+    """
+    import os
+    import uuid
+
+    base = os.environ.get("TEMP", os.path.dirname(input_path))
+    return os.path.join(base, f"redacted_{uuid.uuid4().hex}{ext}")
 
 
 def _is_partial_checkpoint(model_dir: Path) -> bool:
@@ -42,13 +63,13 @@ def get_model():
     global _model
     if _model is not None:
         return _model
-    print("Loading Privacy Filter model...")
+    logger.info("Loading Privacy Filter model...")
 
     from opf._api import OPF
 
     try:
         _model = OPF(device="cpu")
-        print("[OK] Model loaded")
+        logger.info("Model loaded")
         return _model
     except (FileNotFoundError, RuntimeError) as exc:
         # OPF raises FileNotFoundError when the directory is missing
@@ -63,18 +84,18 @@ def get_model():
             or "Checkpoint directory not found" in message
         )
         if not recoverable or not _is_partial_checkpoint(_checkpoint_dir()):
-            print(f"[ERROR] {exc}")
+            logger.error("%s", exc)
             raise
 
-        print("[INFO] Checkpoint is missing or partial. Downloading...")
+        logger.info("Checkpoint is missing or partial. Downloading...")
         _ensure_model_present(
-            progress_callback=lambda msg, pct: print(f"[INFO] {msg}")
+            progress_callback=lambda msg, pct: logger.info("%s", msg)
         )
         _model = OPF(device="cpu")
-        print("[OK] Model loaded after download")
+        logger.info("Model loaded after download")
         return _model
     except Exception as e:
-        print(f"[ERROR] {e}")
+        logger.error("%s", e)
         raise
 
 def extract_text_from_pdf(pdf_path):
@@ -87,7 +108,7 @@ def extract_text_from_pdf(pdf_path):
             doc.close()
         return "\n".join(pages)
     except Exception as e:
-        print(f"[PDF ERROR] {e}")
+        logger.error("PDF read failed: %s", e)
     return None
 
 def extract_text_from_docx(docx_path):
@@ -97,34 +118,31 @@ def extract_text_from_docx(docx_path):
         text = "\n".join(p.text for p in doc.paragraphs)
         return text
     except Exception as e:
-        print(f"[DOCX ERROR] {e}")
+        logger.error("DOCX read failed: %s", e)
     return None
 
 def redact_pdf(input_path, detected_spans):
-    import os
-    import uuid
     import fitz
-    out_path = os.path.join(
-        os.environ.get("TEMP", os.path.dirname(input_path)),
-        f"redacted_{uuid.uuid4().hex}.pdf",
-    )
+    out_path = _temp_output_path(input_path, ".pdf")
     doc = fitz.open(input_path)
-    for page in doc:
-        for span in detected_spans:
-            old_text = span.text
-            new_text = span.placeholder
-            if not old_text or old_text == new_text:
-                continue
-            results = page.search_for(old_text)
-            for rect in results:
-                page.add_redact_annot(
-                    rect, text=new_text, fontsize=9,
-                    fontname="helv", fill=(1, 1, 1), text_color=(0, 0, 0),
-                    align=0
-                )
-        page.apply_redactions()
-    doc.save(out_path)
-    doc.close()
+    try:
+        for page in doc:
+            for span in detected_spans:
+                old_text = span.text
+                new_text = span.placeholder
+                if not old_text or old_text == new_text:
+                    continue
+                results = page.search_for(old_text)
+                for rect in results:
+                    page.add_redact_annot(
+                        rect, text=new_text, fontsize=9,
+                        fontname="helv", fill=(1, 1, 1), text_color=(0, 0, 0),
+                        align=0
+                    )
+            page.apply_redactions()
+        doc.save(out_path)
+    finally:
+        doc.close()
     return out_path
 
 def redact_docx(input_path, detected_spans):
@@ -134,13 +152,8 @@ def redact_docx(input_path, detected_spans):
     splitting the original runs at match boundaries, so the surrounding runs
     keep their original fonts, sizes, bold/italic flags, etc.
     """
-    import os
-    import uuid
     from docx import Document
-    out_path = os.path.join(
-        os.environ.get("TEMP", os.path.dirname(input_path)),
-        f"redacted_{uuid.uuid4().hex}.docx",
-    )
+    out_path = _temp_output_path(input_path, ".docx")
     doc = Document(input_path)
     for span in detected_spans:
         old_text = span.text
@@ -241,17 +254,14 @@ def redact_text(text):
         start = time.time()
         result = model.redact(text)
         elapsed = time.time() - start
-        redacted = result.redacted_text if hasattr(result, 'redacted_text') else str(result)
-        spans = result.detected_spans if hasattr(result, 'detected_spans') else []
+        redacted = result.redacted_text
+        spans = result.detected_spans
         if spans:
             lines = [f"**{len(spans)} entities detected** ({elapsed:.1f}s)", ""]
             lines.append("<details>")
             lines.append(f"<summary>Show {len(spans)} entities</summary>")
             lines.append("")
-            lines.extend(
-                f"- `{s.label if hasattr(s, 'label') else '?'}`: {s.text if hasattr(s, 'text') else ''}"
-                for s in spans
-            )
+            lines.extend(f"- `{s.label}`: {s.text}" for s in spans)
             lines.append("</details>")
             summary = "\n".join(lines)
         else:
@@ -295,7 +305,7 @@ def redact_file(file, progress=gr.Progress()):
         start = time.time()
         result = model.redact(text)
         elapsed = time.time() - start
-        spans = result.detected_spans if hasattr(result, 'detected_spans') else []
+        spans = result.detected_spans
 
         progress((3, 5), desc="Generating redacted output...")
         legend_parts = [
@@ -313,10 +323,9 @@ def redact_file(file, progress=gr.Progress()):
             legend_parts.append("| # | Type | Original | Replacement |")
             legend_parts.append("|--:|------|----------|------------|")
             for i, s in enumerate(spans, 1):
-                label = s.label if hasattr(s, "label") else "?"
-                txt = s.text if hasattr(s, "text") else ""
-                ph = s.placeholder if hasattr(s, "placeholder") else ""
-                legend_parts.append(f"| {i} | `{label}` | {txt} | {ph} |")
+                legend_parts.append(
+                    f"| {i} | `{s.label}` | {s.text} | {s.placeholder} |"
+                )
             legend_parts.append("</details>")
         else:
             legend_parts.append("_No PII entities detected._")
@@ -348,12 +357,13 @@ def _check_app_update_background():
         from app_update import check_for_app_update
         _app_update_info = check_for_app_update()
     except Exception as exc:
-        print(f"[UPDATE] App update check failed: {exc}")
+        logger.warning("App update check failed: %s", exc)
         return
     if _app_update_info.update_available:
-        print(
-            f"[UPDATE] App update available: "
-            f"v{_app_update_info.current_version} -> v{_app_update_info.latest_version}"
+        logger.info(
+            "App update available: v%s -> v%s",
+            _app_update_info.current_version,
+            _app_update_info.latest_version,
         )
 
 
@@ -371,12 +381,13 @@ def _check_model_update_background():
         from model_update import check_for_model_update
         _model_update_info = check_for_model_update()
     except Exception as exc:
-        print(f"[UPDATE] Model update check failed: {exc}")
+        logger.warning("Model update check failed: %s", exc)
         return
     if _model_update_info.update_available:
-        print(
-            f"[UPDATE] Model update available: "
-            f"{_model_update_info.current_date} -> {_model_update_info.latest_date}"
+        logger.info(
+            "Model update available: %s -> %s",
+            _model_update_info.current_date,
+            _model_update_info.latest_date,
         )
 
 def install_app_update(progress=gr.Progress()):
@@ -689,35 +700,31 @@ def create_ui():
     return app
 
 
-def _start_update_check(app):
-    """Start background update checks after a short delay."""
+def _start_update_check():
+    """Start background update checks for the app and the model."""
     threading.Thread(target=_check_app_update_background, daemon=True).start()
     threading.Thread(target=_check_model_update_background, daemon=True).start()
 
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("  Privacy Filter - Local Interface")
-    print("=" * 50)
-    print()
-    print("The model will be loaded the first time you use Detect.")
-    print()
+    logger.info("Privacy Filter - Local Interface")
+    logger.info("The model will be loaded the first time you use Detect.")
 
     app = create_ui()
-    _start_update_check(app)
+    _start_update_check()
     app.queue()
-    
+
     # Try port 7860, if busy try next ports
     port = 7860
     max_port = 7870
     while port <= max_port:
         try:
             app.launch(server_name="0.0.0.0", server_port=port, share=False)
-            print(f"\nOpen http://localhost:{port}")
+            logger.info("Open http://localhost:%d", port)
             break
         except OSError as e:
             if "already in use" in str(e) or "10048" in str(e):
-                print(f"Port {port} in use, trying {port + 1}...")
+                logger.warning("Port %d in use, trying %d...", port, port + 1)
                 port += 1
             else:
                 raise

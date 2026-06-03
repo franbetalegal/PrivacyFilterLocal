@@ -6,6 +6,7 @@ Checks HuggingFace repository for model updates and downloads them.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import sys
 import tempfile
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.request import urlopen, Request
 from urllib.error import URLError
+
+logger = logging.getLogger("privacy_filter.model_update")
 
 # Ensure privacy-filter package is importable
 _PRIVACY_FILTER_DIR = str(Path(__file__).parent / "privacy-filter")
@@ -52,8 +55,8 @@ def get_local_model_date() -> Optional[str]:
     try:
         if LOCAL_DATE_FILE.is_file():
             return LOCAL_DATE_FILE.read_text(encoding="utf-8").strip()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not read local model date: %s", exc)
     return None
 
 
@@ -62,8 +65,8 @@ def save_local_model_date(date_str: str) -> None:
     try:
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
         LOCAL_DATE_FILE.write_text(date_str, encoding="utf-8")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not save local model date: %s", exc)
 
 
 def get_remote_model_date() -> Optional[str]:
@@ -82,7 +85,8 @@ def get_remote_model_date() -> Optional[str]:
 
         # Fallback: check siblings for any date info
         return None
-    except Exception:
+    except Exception as exc:
+        logger.debug("Could not fetch remote model date: %s", exc)
         return None
 
 
@@ -92,7 +96,7 @@ class ModelUpdateInfo:
     update_available: bool
     current_date: Optional[str]
     latest_date: Optional[str]
-    error: Optional[str]
+    error: Optional[str] = None
 
 
 def check_for_model_update() -> ModelUpdateInfo:
@@ -108,61 +112,27 @@ def check_for_model_update() -> ModelUpdateInfo:
         remote_date = get_remote_model_date()
         if remote_date:
             save_local_model_date(remote_date)
-            return ModelUpdateInfo(
-                update_available=False,
-                current_date=remote_date,
-                latest_date=remote_date,
-                error=None,
-            )
-        return ModelUpdateInfo(
-            update_available=False,
-            current_date=None,
-            latest_date=None,
-            error=None,
-        )
+            return ModelUpdateInfo(False, remote_date, remote_date)
+        return ModelUpdateInfo(False, None, None)
 
     try:
         remote_date = get_remote_model_date()
 
         if remote_date is None:
             return ModelUpdateInfo(
-                update_available=False,
-                current_date=current_date,
-                latest_date=None,
+                False, current_date, None,
                 error="Could not fetch remote model date",
             )
 
         if current_date is None:
-            return ModelUpdateInfo(
-                update_available=False,
-                current_date=None,
-                latest_date=remote_date,
-                error=None,
-            )
+            return ModelUpdateInfo(False, None, remote_date)
 
-        update_available = remote_date > current_date
-
-        return ModelUpdateInfo(
-            update_available=update_available,
-            current_date=current_date,
-            latest_date=remote_date,
-            error=None,
-        )
+        return ModelUpdateInfo(remote_date > current_date, current_date, remote_date)
 
     except URLError as exc:
-        return ModelUpdateInfo(
-            update_available=False,
-            current_date=current_date,
-            latest_date=None,
-            error=f"Network error: {exc}",
-        )
+        return ModelUpdateInfo(False, current_date, None, error=f"Network error: {exc}")
     except Exception as exc:
-        return ModelUpdateInfo(
-            update_available=False,
-            current_date=current_date,
-            latest_date=None,
-            error=str(exc),
-        )
+        return ModelUpdateInfo(False, current_date, None, error=str(exc))
 
 
 def _download_checkpoint_to(target_dir: Path) -> None:

@@ -37,6 +37,10 @@ desktop.ini
 *.temp
 .update_temp/
 
+# Debug / scratch output
+test_*.txt
+*.log
+
 # Agent skills (local-only, synced via opencode, not part of the repo)
 .agents/
 skills-lock.json
