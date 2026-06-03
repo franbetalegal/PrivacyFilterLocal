@@ -5,6 +5,27 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-06-03
+
+### Changed
+- **Upgraded Gradio from 4.44.0 to 6.15.1** - Major version upgrade that resolves
+  all known compatibility issues and security vulnerabilities
+- Removed `_patch_gradio_client()` workaround (no longer needed with Gradio 6)
+- Simplified `requirements-web.txt` - Gradio 6 manages its own dependencies
+  (no more pinning Jinja2, Starlette, or FastAPI separately)
+- Updated `install.ps1` to use Gradio 6.15.1
+
+### Fixed
+- Resolved `TypeError: unhashable type: 'dict'` Jinja2/Starlette compatibility error
+- Fixed tab-switching freeze issues present in Gradio 4.44.x
+- Addressed multiple security vulnerabilities in Gradio 4.44.x (CVEs)
+
+### Security
+- Updated from Gradio 4.44.0 to 6.15.1, resolving:
+  - Arbitrary File Upload vulnerability
+  - Allocation of Resources Without Limits
+  - Denial of Service vulnerabilities
+
 ## [1.3.2] - 2026-06-03
 
 ### Fixed

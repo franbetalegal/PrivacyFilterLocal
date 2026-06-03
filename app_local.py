@@ -7,29 +7,6 @@ PROJECT_DIR = Path(__file__).parent
 REPO_DIR = PROJECT_DIR / "privacy-filter"
 sys.path.insert(0, str(REPO_DIR))
 
-def _patch_gradio_client():
-    try:
-        from gradio_client import utils as _cu
-        _orig_get_type = _cu.get_type
-        if getattr(_orig_get_type, "_patched", False):
-            return
-        def _safe_get_type(schema):
-            if not isinstance(schema, dict):
-                return "Any"
-            return _orig_get_type(schema)
-        _safe_get_type._patched = True
-        _cu.get_type = _safe_get_type
-        _orig_json = _cu._json_schema_to_python_type
-        def _safe_json(schema, defs):
-            if not isinstance(schema, dict):
-                return "Any"
-            return _orig_json(schema, defs)
-        _cu._json_schema_to_python_type = _safe_json
-    except Exception:
-        pass
-
-_patch_gradio_client()
-
 import gradio as gr
 
 _model = None

@@ -11,7 +11,7 @@
 - Automatic model update checking via HuggingFace API
 - Automatic app update checking via GitHub Releases
 - One-click update installation with changelog display
-- Web interface built with Gradio
+- Web interface built with Gradio 6
 
 ## Requirements
 
