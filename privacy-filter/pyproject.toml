@@ -9,7 +9,7 @@ description = "Standalone local-only OPF PyTorch model and eval tools."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "huggingface_hub",
+  "huggingface_hub<0.25",
   "numpy",
   "packaging",
   "torch",

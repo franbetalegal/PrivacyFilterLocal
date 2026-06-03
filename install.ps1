@@ -374,10 +374,13 @@ function Install-Dependencies {
     # Gradio and gradio_client are pinned to exact versions: newer 4.45.x
     # and 5.x releases have a regression that freezes the UI when switching
     # tabs in this app. Keep the pin until Gradio fixes the issue upstream.
+    # Jinja2 is pinned to <3.1 to avoid a compatibility issue with Starlette
+    # that causes "TypeError: unhashable type: 'dict'" in the template cache.
     Write-Info "Installing web interface dependencies..."
     $webDeps = @(
         "gradio==4.44.0",
         "gradio_client==1.3.0",
+        "jinja2<3.1",
         "PyMuPDF",
         "python-docx"
     )

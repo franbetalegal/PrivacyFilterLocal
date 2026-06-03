@@ -19,6 +19,7 @@ if not exist ".venv\Scripts\python.exe" (
 
 echo Starting web server...
 echo Open http://localhost:7860 in your browser
+echo (if 7860 is busy, it will try the next port)
 echo Press Ctrl+C to stop
 echo.
 
