@@ -5,6 +5,20 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-06-03
+
+### Fixed
+- Pinned `jinja2<3.1` to resolve `TypeError: unhashable type: 'dict'` caused by
+  a compatibility issue between Gradio 4.44.0, Starlette, and Jinja2 3.1+ template
+  cache. The fix ensures the web interface launches without errors.
+
+### Changed
+- Added `requirements-web.txt` with all web interface dependencies for easier
+  manual installation
+- Updated `install.ps1` to automatically install the Jinja2 fix
+- Updated `start.bat` to clarify that the port may vary if 7860 is busy
+- Pinned `huggingface_hub<0.25` in `pyproject.toml` for compatibility
+
 ## [1.3.1] - 2026-06-02
 
 ### Fixed

@@ -53,7 +53,7 @@ pip install -e .
 cd ..
 
 # Install web interface dependencies
-pip install gradio==4.44.0 gradio_client==1.3.0 PyMuPDF python-docx
+pip install -r requirements-web.txt
 
 # Run the application
 python app_local.py
