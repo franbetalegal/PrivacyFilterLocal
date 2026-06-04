@@ -60,12 +60,25 @@ def _ensure_model_present(progress_callback: Optional[Callable] = None) -> None:
         )
 
 
+def _checkpoint_is_valid(model_dir: Path) -> bool:
+    """Return True if ``model_dir`` looks like a complete OPF checkpoint."""
+    return (
+        model_dir.is_dir()
+        and (model_dir / "config.json").is_file()
+        and any(model_dir.glob("*.safetensors"))
+    )
+
+
 def get_model():
-    """Return the singleton OPF model, loading (and recovering) it lazily.
+    """Return the singleton OPF model, downloading the checkpoint if needed.
 
     Thread-safe: concurrent first-time callers are serialized so the model is
-    constructed exactly once. Mirrors the recovery logic of the old
-    ``app_local.get_model``.
+    constructed exactly once.
+
+    The checkpoint is ensured *before* constructing ``OPF``. This matters when
+    ``OPF_CHECKPOINT`` is set (e.g. the portable build): in that case ``opf``
+    points at the given directory and does NOT auto-download, so an empty/partial
+    directory would only fail later at inference time. We download here instead.
     """
     global _model
     if _model is not None:
@@ -77,32 +90,18 @@ def get_model():
 
         _state["loading"] = True
         try:
-            logger.info("Loading Privacy Filter model...")
             from opf._api import OPF
 
-            try:
-                _model = OPF(device="cpu")
-                logger.info("Model loaded")
-            except (FileNotFoundError, RuntimeError) as exc:
-                # Missing/partial checkpoint is the common cause; try to
-                # recover by downloading a fresh copy.
-                message = str(exc)
-                recoverable = (
-                    "missing config.json" in message
-                    or "no .safetensors" in message
-                    or "Checkpoint directory not found" in message
-                )
-                if not recoverable or not _is_partial_checkpoint(checkpoint_dir()):
-                    logger.error("%s", exc)
-                    raise
-
-                logger.info("Checkpoint is missing or partial. Downloading...")
+            cp = checkpoint_dir()
+            if not _checkpoint_is_valid(cp):
+                logger.info("PII model not found at %s. Downloading...", cp)
                 _ensure_model_present(
                     progress_callback=lambda msg, pct: logger.info("%s", msg)
                 )
-                _model = OPF(device="cpu")
-                logger.info("Model loaded after download")
 
+            logger.info("Loading Privacy Filter model...")
+            _model = OPF(device="cpu")
+            logger.info("Model loaded")
             _state["loaded"] = True
             return _model
         finally:

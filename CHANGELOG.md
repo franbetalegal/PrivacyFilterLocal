@@ -5,6 +5,16 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.4] - 2026-06-04
+
+### Fixed
+- `server/inference.get_model()` now ensures the checkpoint exists (downloading
+  it if missing) **before** constructing `OPF`. When `OPF_CHECKPOINT` is set
+  (portable build), `opf` does not auto-download, so an empty model directory
+  previously only failed at first redaction with
+  `FileNotFoundError: Missing checkpoint config`. The model is now downloaded to
+  the configured directory on first use in that case too.
+
 ## [2.0.3] - 2026-06-04
 
 ### Added
