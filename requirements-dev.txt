@@ -1,4 +1,4 @@
 # Development / test dependencies.
 # Install with:  pip install -r requirements-dev.txt
--r requirements-web.txt
+-r requirements-server.txt
 pytest>=8.0

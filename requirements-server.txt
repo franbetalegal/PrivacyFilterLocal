@@ -1,0 +1,9 @@
+# Backend (FastAPI) dependencies for Privacy Filter - Local.
+# The core ML deps (torch, huggingface_hub, safetensors, tiktoken, numpy) come
+# from privacy-filter/pyproject.toml (installed via `pip install -e .`).
+# Install with:  pip install -r requirements-server.txt
+fastapi
+uvicorn[standard]
+python-multipart
+PyMuPDF
+python-docx

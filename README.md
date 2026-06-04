@@ -11,12 +11,13 @@
 - Automatic model update checking via HuggingFace API
 - Automatic app update checking via GitHub Releases
 - One-click update installation with changelog display
-- Web interface built with Gradio 6
+- Web interface built with **React (Vite)** served by a **FastAPI** backend
 
 ## Requirements
 
 - Windows 10/11
 - Python 3.10+
+- Node.js 18+ (only to build the web interface)
 - Git
 - Internet connection (only for initial download and update checks)
 
@@ -47,16 +48,23 @@ cd C:\privacy-filter
 python -m venv .venv
 .venv\Scripts\activate
 
-# Install the package
+# Install the model package (CPU-only torch recommended)
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 cd privacy-filter
 pip install -e .
 cd ..
 
-# Install web interface dependencies
-pip install -r requirements-web.txt
+# Install backend dependencies
+pip install -r requirements-server.txt
+
+# Build the React frontend
+cd frontend
+npm install
+npm run build
+cd ..
 
 # Run the application
-python app_local.py
+.venv\Scripts\python.exe -m uvicorn server.main:app --host 0.0.0.0 --port 7860
 ```
 
 ## Usage
@@ -84,11 +92,19 @@ opf redact
 ```
 C:\privacy-filter\
 ├── .venv/                  # Python virtual environment
-├── app_local.py            # Web interface
+├── server/                 # FastAPI backend
+│   ├── main.py             # App + API routes; serves the React build
+│   ├── inference.py        # Model singleton + serialized CPU inference
+│   ├── redaction.py        # Text/PDF/DOCX extraction & redaction
+│   └── updates.py          # App/model update orchestration
+├── frontend/               # React + Vite web interface
+│   ├── src/                # Components and tabs
+│   └── dist/               # Production build (generated)
 ├── app_update.py           # Auto-update module (app)
 ├── model_update.py         # Auto-update module (model)
 ├── create_release.py       # Release creation script
-├── start.bat               # Launch script
+├── requirements-server.txt # Backend dependencies
+├── start.bat               # Launch script (uvicorn)
 ├── install.bat             # Installer launcher
 ├── install.ps1             # Full installer
 ├── uninstall.bat           # Uninstaller

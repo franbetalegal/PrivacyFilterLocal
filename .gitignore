@@ -41,6 +41,12 @@ desktop.ini
 test_*.txt
 *.log
 
+# Node / frontend build
+node_modules/
+frontend/dist/
+frontend/node_modules/
+npm-debug.log*
+
 # Agent skills (local-only, synced via opencode, not part of the repo)
 .agents/
 skills-lock.json

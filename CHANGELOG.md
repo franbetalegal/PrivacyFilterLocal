@@ -5,6 +5,30 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-06-03
+
+### Changed
+- **Replaced the Gradio web interface with a React (Vite) frontend served by a
+  FastAPI backend.** This removes Gradio entirely and with it the Svelte 5
+  `effect_update_depth_exceeded` freeze that locked the browser tab on
+  tab-switching (present and unfixed through Gradio 6.15.2).
+- The app now runs via `uvicorn server.main:app` (port 7860, same as before);
+  `start.bat` and `install.ps1` updated accordingly.
+- `install.ps1` installs Node.js (LTS) to build the frontend, installs CPU-only
+  PyTorch, and installs backend deps from `requirements-server.txt`.
+
+### Added
+- `server/` FastAPI backend reusing all existing logic (the `opf` PyTorch model,
+  PyMuPDF/python-docx redaction, and the app/model update modules):
+  endpoints `/api/redact`, `/api/redact-file` + `/api/download/{token}`,
+  `/api/updates(/app|/model)`, `/api/version`, `/api/health`.
+- `frontend/` React + TypeScript app (Text / Files / Info tabs, update banners).
+- Redacted output files are now deleted after download (no PII left in TEMP).
+- Backend tests (`tests/test_server.py`) and `requirements-server.txt`.
+
+### Removed
+- `app_local.py` (Gradio UI) and `requirements-web.txt` (Gradio dependency).
+
 ## [1.4.0] - 2026-06-03
 
 ### Changed

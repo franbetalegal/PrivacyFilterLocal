@@ -241,10 +241,10 @@ function Clone-Repository {
     if (Test-Path "$PROJECT_DIR\.git") {
         Write-Warn "Repository already exists at $PROJECT_DIR"
 
-        $hasAppLocal = Test-Path "$PROJECT_DIR\app_local.py"
+        $hasBackend = Test-Path "$PROJECT_DIR\server\main.py"
         $hasPrivacyFilter = Test-Path "$PROJECT_DIR\privacy-filter\opf"
 
-        if ($hasAppLocal -and $hasPrivacyFilter) {
+        if ($hasBackend -and $hasPrivacyFilter) {
             Write-OK "Repository verified (complete)"
             if (-not $Force) {
                 return $true
@@ -275,7 +275,8 @@ function Clone-Repository {
     # Verify clone
     $checks = @{
         ".git"              = Test-Path "$PROJECT_DIR\.git"
-        "app_local.py"      = Test-Path "$PROJECT_DIR\app_local.py"
+        "server/main.py"    = Test-Path "$PROJECT_DIR\server\main.py"
+        "frontend"          = Test-Path "$PROJECT_DIR\frontend\package.json"
         "privacy-filter/opf"= Test-Path "$PROJECT_DIR\privacy-filter\opf"
         "start.bat"         = Test-Path "$PROJECT_DIR\start.bat"
     }
@@ -356,11 +357,10 @@ function Install-Dependencies {
     & $venvPython -m pip install --upgrade pip 2>&1 | Out-Null
     Write-OK "pip updated"
 
-    # Pre-install the CPU-only build of torch. The app runs inference on CPU
-    # (app_local.py: OPF(device="cpu")), so this guarantees the smallest, most
-    # reproducible wheel and avoids ever pulling the much larger CUDA build.
-    # Installing it first means the editable install below sees torch already
-    # satisfied and won't re-resolve it.
+    # Pre-install the CPU-only build of torch. The backend runs inference on CPU
+    # (OPF(device="cpu")), so this guarantees the smallest, most reproducible
+    # wheel and avoids ever pulling the much larger CUDA build. Installing it
+    # first means the editable install below sees torch already satisfied.
     Write-Info "Installing CPU-only PyTorch..."
     $output = & $venvPip install torch --index-url https://download.pytorch.org/whl/cpu 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0) {
@@ -383,25 +383,68 @@ function Install-Dependencies {
         Write-Info $output
     }
 
-    # Web interface dependencies.
-    # Pinned in requirements-web.txt (single source of truth) so the installer
-    # and a manual `pip install -r requirements-web.txt` never drift apart.
-    Write-Info "Installing web interface dependencies..."
-    $webReqs = "$PROJECT_DIR\requirements-web.txt"
-    if (-not (Test-Path $webReqs)) {
-        Write-Fail "requirements-web.txt not found at $webReqs"
+    # Backend (FastAPI) dependencies. requirements-server.txt is the single
+    # source of truth (FastAPI, uvicorn, python-multipart, PyMuPDF, python-docx).
+    Write-Info "Installing backend dependencies..."
+    $serverReqs = "$PROJECT_DIR\requirements-server.txt"
+    if (-not (Test-Path $serverReqs)) {
+        Write-Fail "requirements-server.txt not found at $serverReqs"
         return $false
     }
-    $output = & $venvPip install -r $webReqs 2>&1 | Out-String
+    $output = & $venvPip install -r $serverReqs 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0) {
-        Write-OK "Web interface dependencies installed"
+        Write-OK "Backend dependencies installed"
     } else {
-        Write-Fail "Error installing web interface dependencies"
+        Write-Fail "Error installing backend dependencies"
         Write-Info $output
         return $false
     }
 
     return $true
+}
+
+# ============================================================
+#  BUILD REACT FRONTEND
+# ============================================================
+
+function Build-Frontend {
+    Write-Step "BUILDING WEB FRONTEND (React)"
+
+    if (-not (Test-CommandExists "npm")) {
+        Write-Warn "Node.js/npm not found; attempting to install Node.js LTS..."
+        if (Test-CommandExists "winget") {
+            $null = winget install OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements --silent 2>&1
+            Refresh-Path
+        } elseif (Test-CommandExists "choco") {
+            $null = choco install nodejs-lts -y 2>&1
+            Refresh-Path
+        }
+        if (-not (Test-CommandExists "npm")) {
+            Write-Fail "Node.js is required to build the web interface."
+            Write-Host "  Install it from https://nodejs.org/ and re-run the installer." -ForegroundColor Yellow
+            return $false
+        }
+    }
+    Write-OK "npm available: $(npm --version)"
+
+    Push-Location "$PROJECT_DIR\frontend"
+    Write-Info "Installing frontend packages (npm ci)..."
+    $null = & npm ci 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "npm ci failed; trying npm install..."
+        $null = & npm install 2>&1 | Out-String
+    }
+    Write-Info "Building production bundle (npm run build)..."
+    $output = & npm run build 2>&1 | Out-String
+    Pop-Location
+
+    if (Test-Path "$PROJECT_DIR\frontend\dist\index.html") {
+        Write-OK "Frontend built"
+        return $true
+    }
+    Write-Fail "Frontend build failed"
+    Write-Info $output
+    return $false
 }
 
 # ============================================================
@@ -473,9 +516,15 @@ function Main {
         exit 1
     }
 
-    # PHASE 5: Dependencies
+    # PHASE 5: Python dependencies
     if (-not (Install-Dependencies)) {
         Write-Host "`n[FATAL] Could not install dependencies." -ForegroundColor Red
+        exit 1
+    }
+
+    # PHASE 6: Build React frontend
+    if (-not (Build-Frontend)) {
+        Write-Host "`n[FATAL] Could not build the web frontend." -ForegroundColor Red
         exit 1
     }
 
@@ -485,7 +534,7 @@ function Main {
     Write-Host "  INSTALLATION COMPLETE ($($elapsed.Minutes)m $($elapsed.Seconds)s)" -ForegroundColor Green
     Write-Host "================================================================" -ForegroundColor Green
 
-    # PHASE 6: Run
+    # PHASE 7: Run
     if (-not $NoRun) {
         Write-Host ""
         Write-Host "  Open http://localhost:7860 in your browser" -ForegroundColor Cyan
@@ -493,13 +542,13 @@ function Main {
         Write-Host ""
 
         Push-Location $PROJECT_DIR
-        & "$PROJECT_DIR\.venv\Scripts\python.exe" app_local.py
+        & "$PROJECT_DIR\.venv\Scripts\python.exe" -m uvicorn server.main:app --host 0.0.0.0 --port 7860
         Pop-Location
     } else {
         Write-Host ""
         Write-Host "To run:" -ForegroundColor Cyan
         Write-Host "  cd $PROJECT_DIR" -ForegroundColor White
-        Write-Host "  .venv\Scripts\python.exe app_local.py" -ForegroundColor White
+        Write-Host "  .venv\Scripts\python.exe -m uvicorn server.main:app --host 0.0.0.0 --port 7860" -ForegroundColor White
         Write-Host ""
     }
 }

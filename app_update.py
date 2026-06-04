@@ -266,24 +266,33 @@ def download_and_install_update(
 
 
 def restart_app() -> None:
-    """Restart the application."""
+    """Restart the application backend (uvicorn) as a detached process.
+
+    Kept for backwards compatibility; the FastAPI backend normally restarts via
+    ``server.updates.restart_server``.
+    """
     import subprocess
     import time
-    
+
     project_dir = Path(__file__).parent
-    script = project_dir / "app_local.py"
     venv_python = project_dir / ".venv" / "Scripts" / "python.exe"
-    
+
     python = str(venv_python) if venv_python.exists() else sys.executable
-    
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = (
+            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+
     # Start new process detached
     subprocess.Popen(
-        [python, str(script)],
+        [python, "-m", "server.main"],
         cwd=str(project_dir),
-        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        creationflags=creationflags,
         close_fds=True,
     )
-    
+
     # Exit current process
     time.sleep(0.5)
     os._exit(0)

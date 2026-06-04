@@ -15,9 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 docx = pytest.importorskip("docx")
 
-# Importing app_local pulls in gradio; skip the whole module if it is absent.
-app_local = pytest.importorskip("app_local")
-_replace_text_in_paragraph = app_local._replace_text_in_paragraph
+from server.redaction import _replace_text_in_paragraph
 
 
 def _paragraph_with_runs(run_texts):
