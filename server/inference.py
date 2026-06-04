@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -26,7 +27,14 @@ _state = {"loaded": False, "loading": False}
 
 
 def checkpoint_dir() -> Path:
-    """Return the default OPF checkpoint directory."""
+    """Return the OPF checkpoint directory.
+
+    Honors the OPF_CHECKPOINT environment variable (used by the portable build
+    to keep the model inside its own folder); defaults to ~/.opf/privacy_filter.
+    """
+    override = os.environ.get("OPF_CHECKPOINT")
+    if override:
+        return Path(override).expanduser()
     return Path.home() / ".opf" / "privacy_filter"
 
 

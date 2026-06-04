@@ -5,6 +5,17 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.3] - 2026-06-04
+
+### Added
+- Environment-configurable runtime so a portable/self-contained build can keep
+  everything inside its own folder:
+  - `model_update.py` and `server/inference.py` honor `OPF_CHECKPOINT` for the
+    model directory (download + load now agree on the same location).
+  - `server.main.main()` honors `PF_HOST` / `PF_PORT` (defaults unchanged:
+    `0.0.0.0` / `7860`).
+  All defaults are unchanged when the variables are unset.
+
 ## [2.0.2] - 2026-06-04
 
 ### Fixed

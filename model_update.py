@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import sys
 import tempfile
@@ -26,7 +27,18 @@ if _PRIVACY_FILTER_DIR not in sys.path:
 
 HF_MODEL_REPO = "openai/privacy-filter"
 HF_API_URL = f"https://huggingface.co/api/models/{HF_MODEL_REPO}"
-MODEL_DIR = Path.home() / ".opf" / "privacy_filter"
+
+
+def _model_dir() -> Path:
+    """Checkpoint directory. Honors OPF_CHECKPOINT so the portable build can
+    keep the model inside its own folder; defaults to ~/.opf/privacy_filter."""
+    override = os.environ.get("OPF_CHECKPOINT")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".opf" / "privacy_filter"
+
+
+MODEL_DIR = _model_dir()
 LOCAL_DATE_FILE = MODEL_DIR / ".last_updated"
 
 

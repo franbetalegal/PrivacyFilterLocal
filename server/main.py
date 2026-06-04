@@ -264,15 +264,20 @@ _mount_frontend()
 
 
 def main() -> None:
-    """Launch uvicorn, trying ports 7860..7870 if the default is busy."""
+    """Launch uvicorn, trying successive ports if the default is busy.
+
+    Host and starting port can be overridden with PF_HOST / PF_PORT (the
+    portable build sets PF_HOST=127.0.0.1 to stay local-only).
+    """
     import uvicorn
 
-    port = 7860
-    max_port = 7870
+    host = os.environ.get("PF_HOST", "0.0.0.0")
+    port = int(os.environ.get("PF_PORT", "7860"))
+    max_port = port + 10
     while port <= max_port:
         try:
             logger.info("Open http://localhost:%d", port)
-            uvicorn.run(app, host="0.0.0.0", port=port, workers=1)
+            uvicorn.run(app, host=host, port=port, workers=1)
             break
         except OSError as e:
             if "address already in use" in str(e).lower() or "10048" in str(e):
