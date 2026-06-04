@@ -17,15 +17,37 @@ REPO = "franbetalegal/PrivacyFilterLocal"
 SCRIPT_DIR = Path(__file__).parent
 VERSION_FILE = SCRIPT_DIR / "VERSION"
 CHANGELOG_FILE = SCRIPT_DIR / "CHANGELOG.md"
+ENV_FILE = SCRIPT_DIR / ".env"
+
+
+def _token_from_env_file():
+    """Read GITHUB_TOKEN from a local .env file, if present.
+
+    Tolerates ``export`` prefixes, surrounding quotes and Windows CRLF line
+    endings. Never logs the value.
+    """
+    if not ENV_FILE.is_file():
+        return ""
+    for raw in ENV_FILE.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() == "GITHUB_TOKEN":
+            return value.strip().strip('"').strip("'").strip()
+    return ""
 
 
 def get_token():
-    """Get GitHub token from environment variable only."""
-    token = os.environ.get("GITHUB_TOKEN", "")
+    """Get the GitHub token from the environment, falling back to .env."""
+    token = os.environ.get("GITHUB_TOKEN", "") or _token_from_env_file()
     if not token:
-        print("Error: GITHUB_TOKEN environment variable not set.")
+        print("Error: GITHUB_TOKEN not set (environment or .env).")
         print("Set it with:")
-        print('  $env:GITHUB_TOKEN = "your-token"')
+        print('  $env:GITHUB_TOKEN = "your-token"   (PowerShell)')
+        print("  or add GITHUB_TOKEN=your-token to a .env file")
         print("  python create_release.py")
         exit(1)
     return token
