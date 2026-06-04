@@ -135,7 +135,14 @@ The application automatically checks for updates when launched. If an update is 
 cd C:\privacy-filter
 git pull
 .venv\Scripts\pip.exe install -e .\privacy-filter
+# Rebuild the web interface so it matches the updated code
+cd frontend
+corepack pnpm install --frozen-lockfile
+corepack pnpm run build
+cd ..
 ```
+
+(The in-app "Update now" button does this rebuild automatically.)
 
 ### Creating a New Release
 

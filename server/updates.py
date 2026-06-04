@@ -32,6 +32,32 @@ def get_updates() -> dict:
     }
 
 
+def _rebuild_frontend() -> tuple[bool, str]:
+    """Rebuild the React frontend after an app update (best effort).
+
+    Uses pnpm via corepack, matching install.ps1. On failure the previous
+    build under frontend/dist is left in place.
+    """
+    frontend = PROJECT_DIR / "frontend"
+    if not frontend.is_dir():
+        return True, "no frontend to build"
+    env = {**os.environ, "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0"}
+    try:
+        subprocess.run(
+            ["corepack", "pnpm", "install", "--frozen-lockfile"],
+            cwd=str(frontend), capture_output=True, timeout=600, env=env,
+        )
+        result = subprocess.run(
+            ["corepack", "pnpm", "run", "build"],
+            cwd=str(frontend), capture_output=True, text=True, timeout=600, env=env,
+        )
+        if result.returncode != 0:
+            return False, f"frontend build failed: {result.stderr[-500:]}"
+        return True, "frontend rebuilt"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"frontend rebuild error: {exc}"
+
+
 def restart_server() -> None:
     """Relaunch the backend as a detached process, then exit this one."""
     venv_python = PROJECT_DIR / ".venv" / "Scripts" / "python.exe"
@@ -87,6 +113,12 @@ def install_app_update() -> dict:
 
     if not success:
         return {"status": "error", "message": message}
+
+    # Rebuild the frontend so the served UI matches the updated code.
+    built_ok, built_msg = _rebuild_frontend()
+    if not built_ok:
+        logger.warning("%s", built_msg)
+        message = f"{message} (warning: {built_msg})"
 
     # Restart shortly so this response can still be delivered.
     threading.Timer(2.0, restart_server).start()

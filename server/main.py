@@ -57,22 +57,42 @@ class RedactRequest(BaseModel):
 TEXT_EXTS = {".txt", ".md", ".csv", ".json", ".log", ".py", ".js", ".xml", ".html"}
 DOC_EXTS = {".pdf", ".docx"}
 
-# token -> (path on disk, filename to present on download). Cleaned up after
-# the file is downloaded, so PII outputs do not linger on disk.
-_downloads: dict[str, tuple[str, str]] = {}
+# token -> (path on disk, filename to present, created timestamp). Entries are
+# removed when downloaded; a TTL sweep deletes ones never downloaded so redacted
+# PII outputs never linger on disk.
+_downloads: dict[str, tuple[str, str, float]] = {}
 _downloads_lock = threading.Lock()
+_DOWNLOAD_TTL_SECONDS = 1800  # 30 minutes
+
+
+def _sweep_expired_downloads() -> None:
+    """Delete redacted outputs that were never downloaded within the TTL."""
+    now = time.time()
+    expired = []
+    with _downloads_lock:
+        for token, (path, _name, created) in list(_downloads.items()):
+            if now - created > _DOWNLOAD_TTL_SECONDS:
+                expired.append(path)
+                _downloads.pop(token, None)
+    for path in expired:
+        _safe_unlink(path)
 
 
 def _register_download(path: str, download_name: str) -> str:
     token = uuid.uuid4().hex
     with _downloads_lock:
-        _downloads[token] = (path, download_name)
+        _downloads[token] = (path, download_name, time.time())
+    _sweep_expired_downloads()
     return token
 
 
 def _pop_download(token: str) -> tuple[str, str] | None:
     with _downloads_lock:
-        return _downloads.pop(token, None)
+        entry = _downloads.pop(token, None)
+    if entry is None:
+        return None
+    path, name, _created = entry
+    return (path, name)
 
 
 def _safe_unlink(path: str | None) -> None:

@@ -5,6 +5,18 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-06-04
+
+### Fixed
+- The in-app "Update now" flow now **rebuilds the React frontend** (pnpm) after
+  pulling/installing new code, so the served UI always matches the updated
+  backend instead of serving a stale bundle.
+- Redacted output files that are never downloaded are now removed after a TTL
+  (30 min) instead of lingering in TEMP, so no PII output is left on disk.
+
+### Added
+- `typecheck` script in the frontend (`tsc --noEmit`).
+
 ## [2.0.1] - 2026-06-04
 
 ### Changed
