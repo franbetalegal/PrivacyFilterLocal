@@ -17,7 +17,7 @@
 
 - Windows 10/11
 - Python 3.10+
-- Node.js 18+ (only to build the web interface)
+- Node.js 18+ (only to build the web interface; pnpm is used via corepack)
 - Git
 - Internet connection (only for initial download and update checks)
 
@@ -57,10 +57,11 @@ cd ..
 # Install backend dependencies
 pip install -r requirements-server.txt
 
-# Build the React frontend
+# Build the React frontend (pnpm via corepack, bundled with Node.js)
 cd frontend
-npm install
-npm run build
+corepack enable
+corepack pnpm install
+corepack pnpm run build
 cd ..
 
 # Run the application

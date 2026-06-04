@@ -1,0 +1,5 @@
+# pnpm settings. Only esbuild (used by Vite) is allowed to run its install
+# script; pnpm blocks all other dependency build scripts by default, which is
+# the desired hardening against malicious postinstall scripts.
+allowBuilds:
+  esbuild: true

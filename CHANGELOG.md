@@ -5,6 +5,18 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-06-04
+
+### Changed
+- Frontend now uses **pnpm** (via Node's corepack) instead of npm. pnpm uses a
+  content-addressed global store with hard links (less disk, faster installs)
+  and a strict, non-flat `node_modules`.
+- `pnpm-workspace.yaml` allows only `esbuild` to run an install script; pnpm
+  blocks all other dependency build scripts by default (hardening against
+  malicious postinstall scripts). pnpm version pinned via `packageManager`.
+- `install.ps1` builds the frontend with `corepack pnpm install --frozen-lockfile`
+  + `corepack pnpm run build`. Replaced `package-lock.json` with `pnpm-lock.yaml`.
+
 ## [2.0.0] - 2026-06-03
 
 ### Changed

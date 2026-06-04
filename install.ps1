@@ -408,10 +408,12 @@ function Install-Dependencies {
 # ============================================================
 
 function Build-Frontend {
-    Write-Step "BUILDING WEB FRONTEND (React)"
+    Write-Step "BUILDING WEB FRONTEND (React + pnpm)"
 
-    if (-not (Test-CommandExists "npm")) {
-        Write-Warn "Node.js/npm not found; attempting to install Node.js LTS..."
+    # Node.js ships with corepack, which provides pnpm (the package manager
+    # pinned in frontend/package.json). We never install pnpm globally.
+    if (-not (Test-CommandExists "node")) {
+        Write-Warn "Node.js not found; attempting to install Node.js LTS..."
         if (Test-CommandExists "winget") {
             $null = winget install OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements --silent 2>&1
             Refresh-Path
@@ -419,23 +421,32 @@ function Build-Frontend {
             $null = choco install nodejs-lts -y 2>&1
             Refresh-Path
         }
-        if (-not (Test-CommandExists "npm")) {
+        if (-not (Test-CommandExists "node")) {
             Write-Fail "Node.js is required to build the web interface."
             Write-Host "  Install it from https://nodejs.org/ and re-run the installer." -ForegroundColor Yellow
             return $false
         }
     }
-    Write-OK "npm available: $(npm --version)"
+    Write-OK "Node.js available: $(node --version)"
+
+    if (-not (Test-CommandExists "corepack")) {
+        Write-Fail "corepack not found (ships with Node.js 16.9+). Update Node.js."
+        return $false
+    }
+
+    # Let corepack download the pinned pnpm without an interactive prompt.
+    $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = "0"
+    $null = & corepack enable 2>&1
 
     Push-Location "$PROJECT_DIR\frontend"
-    Write-Info "Installing frontend packages (npm ci)..."
-    $null = & npm ci 2>&1 | Out-String
+    Write-Info "Installing frontend packages (pnpm, frozen lockfile)..."
+    $null = & corepack pnpm install --frozen-lockfile 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn "npm ci failed; trying npm install..."
-        $null = & npm install 2>&1 | Out-String
+        Write-Warn "Frozen install failed; retrying with a lockfile update..."
+        $null = & corepack pnpm install 2>&1 | Out-String
     }
-    Write-Info "Building production bundle (npm run build)..."
-    $output = & npm run build 2>&1 | Out-String
+    Write-Info "Building production bundle (pnpm run build)..."
+    $output = & corepack pnpm run build 2>&1 | Out-String
     Pop-Location
 
     if (Test-Path "$PROJECT_DIR\frontend\dist\index.html") {
