@@ -66,8 +66,22 @@ export async function getVersion(): Promise<string> {
   return data.version;
 }
 
-export async function getHealth(): Promise<{ model_loaded: boolean; loading: boolean }> {
+export interface Health {
+  model_loaded: boolean;
+  loading: boolean;
+  downloading: boolean;
+  download_pct: number;
+  error: string | null;
+}
+
+export async function getHealth(): Promise<Health> {
   return jsonOrThrow(await fetch("/api/health"));
+}
+
+export const DIAGNOSTICS_URL = "/api/diagnostics";
+
+export async function shutdown(): Promise<void> {
+  await fetch("/api/shutdown", { method: "POST" });
 }
 
 export async function redactText(text: string): Promise<RedactTextResult> {

@@ -25,6 +25,9 @@ _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="opf-infer")
 # Lightweight state for the /api/health endpoint.
 _state = {"loaded": False, "loading": False}
 
+# First-run model download progress (surfaced in the web UI instead of a console).
+_dl_state = {"downloading": False, "pct": 0, "error": None}
+
 
 def checkpoint_dir() -> Path:
     """Return the OPF checkpoint directory.
@@ -116,9 +119,51 @@ def reset_model() -> None:
         _state["loaded"] = False
 
 
+def _download_progress(message, pct) -> None:
+    """progress_callback for the model download; updates the web-visible state."""
+    try:
+        _dl_state["pct"] = max(0, min(100, int(round((pct or 0) * 100))))
+    except (TypeError, ValueError):
+        pass
+    logger.info("%s (%d%%)", message, _dl_state["pct"])
+
+
+def ensure_model_ready() -> None:
+    """Blocking: make sure the checkpoint exists, downloading it if missing.
+
+    Updates ``_dl_state`` so the web UI can show progress. Safe to call when the
+    model is already present (no-op). Runs on the inference thread pool.
+    """
+    if _checkpoint_is_valid(checkpoint_dir()):
+        return
+    _dl_state["downloading"] = True
+    _dl_state["error"] = None
+    _dl_state["pct"] = 0
+    try:
+        _ensure_model_present(progress_callback=_download_progress)
+        _dl_state["pct"] = 100
+    except Exception as exc:  # noqa: BLE001
+        _dl_state["error"] = str(exc)
+        logger.error("Model download failed: %s", exc)
+    finally:
+        _dl_state["downloading"] = False
+
+
+def start_background_download() -> None:
+    """Kick off the first-run model download without blocking startup."""
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(_executor, ensure_model_ready)
+
+
 def status() -> dict:
-    """Return a snapshot of the model state for the health endpoint."""
-    return {"model_loaded": _state["loaded"], "loading": _state["loading"]}
+    """Return a snapshot of the model/download state for the health endpoint."""
+    return {
+        "model_loaded": _state["loaded"],
+        "loading": _state["loading"],
+        "downloading": _dl_state["downloading"],
+        "download_pct": _dl_state["pct"],
+        "error": _dl_state["error"],
+    }
 
 
 def _redact_sync(text: str):

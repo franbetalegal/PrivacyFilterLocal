@@ -5,6 +5,24 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-06-04
+
+### Added
+- **In-app first-run experience**: the model download now runs in the background
+  on startup and its progress is shown in the web UI ("Preparing…" screen) via
+  an extended `/api/health` (`downloading`, `download_pct`, `error`). No console
+  needed.
+- **Error/diagnostics layer**: rotating file log at `PF_LOG_DIR/privacy-filter.log`;
+  a global exception handler that returns a readable message to the UI; a
+  `GET /api/diagnostics` endpoint that returns a `.zip` (version, environment —
+  no secrets — and recent logs) plus a **Diagnostics** button in the UI.
+- **`POST /api/shutdown`** and a **Quit** button so the app can be stopped from
+  the UI (needed when the portable build runs without a console).
+
+### Notes
+- These power the portable build's "double-click → opens, no console, errors in
+  the web" experience. Defaults unchanged for the normal install.
+
 ## [2.0.4] - 2026-06-04
 
 ### Fixed

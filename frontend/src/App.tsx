@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { getVersion } from "./api";
+import { getVersion, getHealth, shutdown, DIAGNOSTICS_URL, type Health } from "./api";
 import TextTab from "./tabs/TextTab";
 import FilesTab from "./tabs/FilesTab";
 import InfoTab from "./tabs/InfoTab";
 import UpdateBanner from "./components/UpdateBanner";
+import PreparingScreen from "./components/PreparingScreen";
 
 type TabKey = "text" | "files" | "info";
 
@@ -16,6 +17,8 @@ const TABS: { key: TabKey; label: string }[] = [
 export default function App() {
   const [tab, setTab] = useState<TabKey>("text");
   const [version, setVersion] = useState<string>("");
+  const [health, setHealth] = useState<Health | null>(null);
+  const [quitting, setQuitting] = useState(false);
 
   useEffect(() => {
     getVersion()
@@ -23,15 +26,82 @@ export default function App() {
       .catch(() => setVersion("unknown"));
   }, []);
 
+  // Poll health until the backend is ready (model not downloading / no error).
+  useEffect(() => {
+    let active = true;
+    let timer: number | undefined;
+
+    async function poll() {
+      try {
+        const h = await getHealth();
+        if (!active) return;
+        setHealth(h);
+        if (h.downloading || h.error) {
+          timer = window.setTimeout(poll, 1500);
+        }
+      } catch {
+        if (!active) return;
+        setHealth(null); // server not reachable yet
+        timer = window.setTimeout(poll, 1500);
+      }
+    }
+    poll();
+    return () => {
+      active = false;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, []);
+
+  async function onQuit() {
+    setQuitting(true);
+    try {
+      await shutdown();
+    } catch {
+      /* the server exits, so the request may not return cleanly */
+    }
+  }
+
+  if (quitting) {
+    return (
+      <div className="app">
+        <div className="prepare">
+          <h2>Server stopped</h2>
+          <p className="muted">You can close this window.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const ready = health !== null && !health.downloading && !health.error;
+  if (!ready) {
+    return (
+      <div className="app">
+        <PreparingScreen health={health} />
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <UpdateBanner />
 
       <header className="header">
-        <h1>Privacy Filter — Local</h1>
-        <p className="subtitle">
-          100% local PII detection{version ? ` · v${version}` : ""}
-        </p>
+        <div className="header-row">
+          <div>
+            <h1>Privacy Filter — Local</h1>
+            <p className="subtitle">
+              100% local PII detection{version ? ` · v${version}` : ""}
+            </p>
+          </div>
+          <div className="header-actions">
+            <a className="btn" href={DIAGNOSTICS_URL} download title="Download a support bundle">
+              Diagnostics
+            </a>
+            <button className="btn" onClick={onQuit} title="Stop the local server">
+              Quit
+            </button>
+          </div>
+        </div>
       </header>
 
       <nav className="tabs" role="tablist">

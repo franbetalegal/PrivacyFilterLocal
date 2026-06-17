@@ -12,15 +12,17 @@ import tempfile
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 # Importing the package configures sys.path for ``opf`` / update modules.
 from server import PROJECT_DIR
 from server import inference, redaction
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
@@ -32,9 +34,49 @@ logging.basicConfig(
 )
 logger = logging.getLogger("privacy_filter")
 
+
+def _setup_file_logging() -> Path | None:
+    """Mirror logs to a rotating file so users can send diagnostics.
+
+    The directory is PF_LOG_DIR (set by the portable launcher to stay inside the
+    app folder) or ``<project>/logs`` by default.
+    """
+    log_dir = Path(os.environ.get("PF_LOG_DIR") or (PROJECT_DIR / "logs"))
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.warning("Could not create log dir %s: %s", log_dir, exc)
+        return None
+    log_path = log_dir / "privacy-filter.log"
+    handler = RotatingFileHandler(
+        log_path, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+    )
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    logging.getLogger().addHandler(handler)
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        logging.getLogger(name).addHandler(handler)
+    return log_path
+
+
+_LOG_PATH = _setup_file_logging()
+
 FRONTEND_DIST = PROJECT_DIR / "frontend" / "dist"
 
-app = FastAPI(title="Privacy Filter - Local", version="2.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start the first-run model download in the background so it doesn't block
+    # the server from listening; progress is exposed via /api/health.
+    try:
+        inference.start_background_download()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Could not start background model download: %s", exc)
+    yield
+
+
+app = FastAPI(title="Privacy Filter - Local", version="2.0.0", lifespan=lifespan)
 
 # Permissive CORS so the Vite dev server (different port) can call the API.
 # In production the frontend is served from the same origin, so this is a no-op.
@@ -44,6 +86,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    """Log the full traceback and return a readable message to the UI."""
+    ref = uuid.uuid4().hex[:8]
+    logger.error(
+        "Unhandled error [%s] on %s: %s",
+        ref, request.url.path, exc, exc_info=True,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}", "ref": ref},
+    )
 
 
 # --------------------------------------------------------------------------
@@ -236,6 +292,68 @@ def api_update_model() -> dict:
     from server import updates
 
     return updates.install_model_update()
+
+
+# --------------------------------------------------------------------------
+#  API: diagnostics & shutdown
+# --------------------------------------------------------------------------
+@app.get("/api/diagnostics")
+def api_diagnostics() -> Response:
+    """Return a small .zip with version, environment and recent logs.
+
+    Lets the user download a support bundle to send. No secrets are included
+    (only which env vars are *set*, never their values).
+    """
+    import io
+    import json
+    import platform
+    import sys
+    import zipfile
+
+    from app_update import get_local_version
+
+    cp = inference.checkpoint_dir()
+    info = {
+        "version": get_local_version(),
+        "platform": platform.platform(),
+        "python": sys.version,
+        "model": inference.status(),
+        "checkpoint_dir": str(cp),
+        "checkpoint_present": inference._checkpoint_is_valid(cp),
+        "env_set": {
+            k: bool(os.environ.get(k))
+            for k in (
+                "OPF_CHECKPOINT", "HF_HOME", "TIKTOKEN_CACHE_DIR",
+                "PF_HOST", "PF_PORT", "PF_LOG_DIR", "TEMP",
+            )
+        },
+    }
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("info.json", json.dumps(info, indent=2, default=str))
+        if _LOG_PATH and _LOG_PATH.exists():
+            try:
+                text = _LOG_PATH.read_text(encoding="utf-8", errors="replace")
+                zf.writestr("privacy-filter.log", text[-200_000:])  # last ~200 KB
+            except OSError:
+                pass
+    buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": "attachment; filename=privacy-filter-diagnostics.zip"
+        },
+    )
+
+
+@app.post("/api/shutdown")
+def api_shutdown() -> dict:
+    """Stop the server (the 'Quit' button; the process has no console)."""
+    logger.info("Shutdown requested via API")
+    threading.Timer(0.4, lambda: os._exit(0)).start()
+    return {"status": "stopping"}
 
 
 # --------------------------------------------------------------------------
