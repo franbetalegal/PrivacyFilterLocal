@@ -5,6 +5,15 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-06-04
+
+### Changed
+- Portable launcher now opens an instant **loading page** (`app/loading.html`)
+  on double-click, so the user gets immediate feedback ("Starting…") instead of
+  a silent wait. It polls the server and redirects to the app once it responds
+  (where the model-download progress is shown); if the server never starts it
+  shows recovery steps. Replaces `_open_browser.py`/`error.html`.
+
 ## [2.2.0] - 2026-06-04
 
 ### Changed

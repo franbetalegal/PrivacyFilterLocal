@@ -358,64 +358,61 @@ function Get-ModelOffline {
 function New-LauncherScripts {
     Write-Step "PHASE 7: CREATING LAUNCHER SCRIPTS"
 
-    # Browser opener: waits until the server is listening, then opens it. If the
-    # server never comes up (startup crash), opens the local error.html instead.
-    $openBrowser = @'
-"""Open the app when the server is up; otherwise open the local error page."""
-import os, socket, time, webbrowser
-from pathlib import Path
-
-host = os.environ.get("PF_HOST", "127.0.0.1")
-if host in ("", "0.0.0.0"):
-    host = "127.0.0.1"
-port = int(os.environ.get("PF_PORT", "7860"))
-
-up = False
-for _ in range(180):  # up to ~90 s
-    try:
-        with socket.create_connection((host, port), timeout=1):
-            up = True
-            break
-    except OSError:
-        time.sleep(0.5)
-
-if up:
-    webbrowser.open("http://localhost:%d" % port)
-else:
-    err = Path(__file__).resolve().parent / "error.html"
-    if err.is_file():
-        webbrowser.open(err.as_uri())
-'@
-    Set-Content -Path (Join-Path $APP_DIR "_open_browser.py") -Value $openBrowser -Encoding ASCII
-    Write-OK "Created app\_open_browser.py"
-
-    $errorHtml = @'
+    # loading.html: opened in the browser IMMEDIATELY by the launcher, so the
+    # user gets instant feedback. It polls the server and, once it responds,
+    # redirects to the app (which then shows the model-download progress). If the
+    # server never comes up, it shows recovery steps. No console needed.
+    $loadingHtml = @'
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><title>Privacy Filter - could not start</title>
+<meta charset="utf-8"><title>Privacy Filter</title>
 <style>
+ html,body{height:100%}
  body{font-family:system-ui,Segoe UI,sans-serif;background:#0f1115;color:#e6e8ec;
-      max-width:640px;margin:40px auto;padding:0 16px;line-height:1.5}
+      margin:0;display:flex;align-items:center;justify-content:center}
+ .box{max-width:520px;padding:32px;text-align:center}
+ h2{margin:18px 0 8px}
+ .muted{color:#9aa3b2;line-height:1.5}
  code{background:#1f232c;padding:2px 6px;border-radius:4px}
- .muted{color:#9aa3b2}
+ .spinner{width:40px;height:40px;margin:0 auto;border:4px solid #2a2f3a;
+          border-top-color:#4f8cff;border-radius:50%;animation:spin .8s linear infinite}
+ @keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
-<h1>Privacy Filter could not start</h1>
-<p>The local server did not start in time, so the app could not open.</p>
-<h3>What to do</h3>
-<ol>
- <li>Run <code>start.bat</code> (in this folder) to see the error in a console window.</li>
- <li>Send the log file for support: <code>logs\privacy-filter.log</code>.</li>
- <li>Make sure no antivirus/firewall is blocking the bundled Python.</li>
-</ol>
-<p class="muted">Everything stays inside this folder; you can delete it anytime.</p>
+<div class="box">
+  <div class="spinner" id="sp"></div>
+  <h2 id="msg">Starting Privacy Filter…</h2>
+  <p class="muted" id="sub">The first run can take a moment. If Windows asks about
+     the firewall, click <b>Allow access</b>.</p>
+</div>
+<script>
+  var URL = "http://localhost:7860";
+  var tries = 0;
+  function fail(){
+    document.getElementById("sp").style.display = "none";
+    document.getElementById("msg").textContent = "Could not start Privacy Filter";
+    document.getElementById("sub").innerHTML =
+      "Run <code>start.bat</code> in this folder to see the error, or send " +
+      "<code>logs\\privacy-filter.log</code> for support.";
+  }
+  function poll(){
+    tries++;
+    fetch(URL + "/api/health?_=" + Date.now(), {mode:"no-cors", cache:"no-store"})
+      .then(function(){ window.location.replace(URL); })
+      .catch(function(){
+        if (tries > 180) { fail(); return; }   // ~90 s
+        setTimeout(poll, 500);
+      });
+  }
+  poll();
+</script>
 </body>
 </html>
 '@
-    Set-Content -Path (Join-Path $APP_DIR "error.html") -Value $errorHtml -Encoding ASCII
-    Write-OK "Created app\error.html"
+    Set-Content -Path (Join-Path $APP_DIR "loading.html") -Value $loadingHtml -Encoding ASCII
+    Write-OK "Created app\loading.html"
 
     # Shared env block reused by the .bat files (%~dp0 = the portable folder).
     $envBlock = @'
@@ -440,8 +437,8 @@ if not exist "%~dp0logs" mkdir "%~dp0logs"
 @echo off
 cd /d "%~dp0"
 $envBlock
-start "" "%~dp0python\pythonw.exe" "%~dp0app\_open_browser.py"
 start "" "%~dp0python\pythonw.exe" -m server.main
+start "" "%~dp0app\loading.html"
 "@
     Set-Content -Path (Join-Path $OUT "launch.bat") -Value $launchBat -Encoding ASCII
     Write-OK "Created launch.bat"
@@ -472,7 +469,7 @@ echo The browser opens automatically when the server is ready.
 echo The first run downloads the model (~2.7 GB); progress shows in the app.
 echo Press Ctrl+C to stop.
 echo.
-start "" /b "%~dp0python\python.exe" "%~dp0app\_open_browser.py"
+start "" "%~dp0app\loading.html"
 "%~dp0python\python.exe" -m server.main
 pause
 "@
