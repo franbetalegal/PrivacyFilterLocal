@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -381,6 +382,24 @@ def _mount_frontend() -> None:
 _mount_frontend()
 
 
+def _ensure_std_streams() -> None:
+    """Under pythonw.exe (no console) sys.stdout/stderr are None, which makes
+    uvicorn's stream logging crash on startup. Point them at a file so the
+    server runs windowless and any output is captured."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        log_dir = Path(os.environ.get("PF_LOG_DIR") or (PROJECT_DIR / "logs"))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stream = open(log_dir / "server-stdout.log", "a", buffering=1, encoding="utf-8")
+        if sys.stdout is None:
+            sys.stdout = stream
+        if sys.stderr is None:
+            sys.stderr = stream
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not set up std streams: %s", exc)
+
+
 def main() -> None:
     """Launch uvicorn, trying successive ports if the default is busy.
 
@@ -389,20 +408,29 @@ def main() -> None:
     """
     import uvicorn
 
+    _ensure_std_streams()
+
     host = os.environ.get("PF_HOST", "0.0.0.0")
     port = int(os.environ.get("PF_PORT", "7860"))
     max_port = port + 10
     while port <= max_port:
         try:
             logger.info("Open http://localhost:%d", port)
-            uvicorn.run(app, host=host, port=port, workers=1)
+            # log_config=None: don't let uvicorn install its own stdout/stderr
+            # stream handlers (they break under pythonw); our root file handler
+            # already captures uvicorn's logs via propagation.
+            uvicorn.run(app, host=host, port=port, workers=1, log_config=None)
             break
         except OSError as e:
             if "address already in use" in str(e).lower() or "10048" in str(e):
                 logger.warning("Port %d in use, trying %d...", port, port + 1)
                 port += 1
             else:
+                logger.error("Server failed to start: %s", e, exc_info=True)
                 raise
+        except Exception as e:  # noqa: BLE001
+            logger.error("Server crashed on startup: %s", e, exc_info=True)
+            raise
 
 
 if __name__ == "__main__":

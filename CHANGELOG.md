@@ -5,6 +5,16 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.2] - 2026-06-04
+
+### Fixed
+- Portable launch via `pythonw.exe` (no console) crashed uvicorn silently
+  because `sys.stdout`/`sys.stderr` are `None` and uvicorn configures stdout
+  stream logging. `server.main.main()` now points those streams at a file when
+  missing and runs uvicorn with `log_config=None` (our rotating file handler
+  captures uvicorn's logs via propagation), plus logs any startup exception.
+  The windowless launcher now actually serves the app.
+
 ## [2.2.1] - 2026-06-04
 
 ### Changed
