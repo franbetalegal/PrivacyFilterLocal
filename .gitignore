@@ -47,6 +47,10 @@ frontend/dist/
 frontend/node_modules/
 npm-debug.log*
 
+# Portable build output + runtime logs
+portable-build/
+logs/
+
 # Agent skills (local-only, synced via opencode, not part of the repo)
 .agents/
 skills-lock.json

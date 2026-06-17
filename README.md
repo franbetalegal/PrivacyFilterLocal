@@ -1,180 +1,107 @@
 # Privacy Filter - Local
 
-100% local PII detection and redaction tool powered by OpenAI's Privacy Filter model.
+100% local PII detection and redaction, powered by OpenAI's Privacy Filter model.
+React (Vite) web interface served by a FastAPI backend — and packaged as a
+**portable**, self-contained Windows app.
 
 ## Features
 
-- Detects 8 types of PII: names, emails, phones, addresses, dates, URLs, account numbers, and secrets
-- Processes text, PDF, and DOCX files
-- Returns redacted PDF/DOCX with PII masked
-- Runs entirely offline - no data leaves your computer
-- Automatic model update checking via HuggingFace API
-- Automatic app update checking via GitHub Releases
-- One-click update installation with changelog display
-- Web interface built with **React (Vite)** served by a **FastAPI** backend
+- Detects 8 types of PII: names, emails, phones, addresses, dates, URLs, account
+  numbers, and secrets
+- Processes text, PDF, and DOCX files; returns redacted PDF/DOCX
+- Runs entirely offline (after the model is downloaded once)
+- **Portable**: a single folder with an embedded Python — no Python/Node install
+  on the target machine, and nothing written outside the folder
+- First-run model download and any errors are shown **in the app** (no console)
+- Model updates from HuggingFace
 
-## Requirements
+## For end users — run the portable app
 
-- Windows 10/11
-- Python 3.10+
-- Node.js 18+ (only to build the web interface; pnpm is used via corepack)
-- Git
-- Internet connection (only for initial download and update checks)
+1. Get the `portable-build` folder (built as below) and copy it anywhere.
+2. Double-click **`Privacy Filter.vbs`**.
+3. The app opens in your browser automatically. The first run downloads the model
+   (~2.7 GB); progress is shown in the app.
 
-## Quick Install
+- **Stop**: the **Quit** button in the UI.
+- **Something wrong?** Use **Diagnostics** in the UI to download a support bundle,
+  or run `start.bat` to see the server in a console. Logs: `logs\privacy-filter.log`.
 
-### Option 1: Run the installer
+Everything (model, caches, temp, logs) stays inside the folder; binds to
+`127.0.0.1` only. Delete the folder to uninstall.
 
-```bash
-install.bat
+## Build the portable package
+
+Run on a build machine with **Python** and **Node.js** (Node is only needed to
+build the React UI; the end user never needs it).
+
+```powershell
+git clone https://github.com/franbetalegal/PrivacyFilterLocal.git
+cd PrivacyFilterLocal
+.\build_portable.ps1                 # output: .\portable-build\
+.\build_portable.ps1 -IncludeModel   # also bundle the model (fully offline, ~4 GB)
+.\build_portable.ps1 -RebuildFrontend  # force-rebuild the UI (after UI changes)
 ```
 
-This will automatically:
-1. Install Python 3.12 (if not present)
-2. Install Git (if not present)
-3. Clone the repository to `C:\privacy-filter`
-4. Create a Python virtual environment
-5. Install all dependencies
-6. Launch the web interface
+The script downloads an embeddable Python, installs CPU-only PyTorch + the `opf`
+package + `requirements-server.txt`, builds/uses `frontend/dist`, copies the
+backend, and writes the launchers into `portable-build/`. Distribute that folder.
 
-### Option 2: Manual installation
+## Develop
 
-```bash
-# Clone the repository
-git clone https://github.com/franbetalegal/PrivacyFilterLocal.git C:\privacy-filter
-cd C:\privacy-filter
-
-# Create virtual environment
-python -m venv .venv
-.venv\Scripts\activate
-
-# Install the model package (CPU-only torch recommended)
+```powershell
+# Backend
+python -m venv .venv ; .\.venv\Scripts\Activate.ps1
 pip install torch --index-url https://download.pytorch.org/whl/cpu
-cd privacy-filter
-pip install -e .
-cd ..
-
-# Install backend dependencies
+pip install -e .\privacy-filter
 pip install -r requirements-server.txt
+python -m uvicorn server.main:app --host 127.0.0.1 --port 7860
 
-# Build the React frontend (pnpm via corepack, bundled with Node.js)
-cd frontend
-corepack enable
-corepack pnpm install
-corepack pnpm run build
-cd ..
+# Frontend (separate terminal; proxies /api to :7860)
+corepack pnpm -C frontend install
+corepack pnpm -C frontend dev        # http://localhost:5173
+# or build once and let FastAPI serve it:
+corepack pnpm -C frontend run build
 
-# Run the application
-.venv\Scripts\python.exe -m uvicorn server.main:app --host 0.0.0.0 --port 7860
+# Tests
+pip install -r requirements-dev.txt ; python -m pytest tests/
 ```
 
-## Usage
+There is also a CLI from the `opf` package: `opf redact "text"`.
 
-1. Open your browser and go to `http://localhost:7860`
-2. Use the **Text** tab to analyze text directly
-3. Use the **Files** tab to upload PDF or DOCX files
-4. The **Info** tab shows supported PII categories
-
-### Command Line
-
-```bash
-# Redact text directly
-opf redact "My name is John, email: john@example.com"
-
-# Process a file
-opf redact --text-file document.txt
-
-# Interactive mode
-opf redact
-```
-
-## Project Structure
+## Project structure
 
 ```
-C:\privacy-filter\
-├── .venv/                  # Python virtual environment
+PrivacyFilterLocal/
+├── build_portable.ps1      # Builds the portable package into portable-build/
 ├── server/                 # FastAPI backend
-│   ├── main.py             # App + API routes; serves the React build
-│   ├── inference.py        # Model singleton + serialized CPU inference
+│   ├── main.py             # API routes; serves the React build; logging/diagnostics
+│   ├── inference.py        # Model singleton + background download + CPU inference
 │   ├── redaction.py        # Text/PDF/DOCX extraction & redaction
-│   └── updates.py          # App/model update orchestration
-├── frontend/               # React + Vite web interface
-│   ├── src/                # Components and tabs
-│   └── dist/               # Production build (generated)
-├── app_update.py           # Auto-update module (app)
-├── model_update.py         # Auto-update module (model)
-├── create_release.py       # Release creation script
-├── requirements-server.txt # Backend dependencies
-├── start.bat               # Launch script (uvicorn)
-├── install.bat             # Installer launcher
-├── install.ps1             # Full installer
-├── uninstall.bat           # Uninstaller
-├── VERSION                 # Current version number
-├── CHANGELOG.md            # Version history
-└── privacy-filter/         # Core OPF package
-    ├── opf/                # Main package
-    ├── pyproject.toml      # Package config
-    └── examples/           # Demo data and scripts
+│   └── updates.py          # Model/app update orchestration
+├── frontend/               # React + Vite UI (src/; dist/ is generated)
+├── app_update.py           # App version check (GitHub Releases)
+├── model_update.py         # Model download/update (HuggingFace; honors OPF_CHECKPOINT)
+├── create_release.py       # GitHub release helper
+├── requirements-server.txt # Backend deps (single source)
+├── requirements-dev.txt    # + pytest
+├── tests/                  # pytest
+├── VERSION / CHANGELOG.md
+├── privacy-filter/         # Core OPF package (opf/, pyproject.toml)
+└── portable-build/         # Generated portable package (git-ignored)
 ```
 
 ## Updating
 
-### Automatic Update (Recommended)
+- **Model**: the **Update model** button (Info tab) downloads the latest model.
+- **App**: distribute a freshly built `portable-build/`. (The in-app self-update
+  via git does not apply to the portable package.)
 
-The application automatically checks for updates when launched. If an update is available:
-
-1. A banner appears at the top of the interface showing:
-   - Current version and new version
-   - Changelog with new features and fixes
-2. Click **"Update now"** to download and install
-3. The app restarts automatically with the new version
-
-### Manual Update
-
-```bash
-cd C:\privacy-filter
-git pull
-.venv\Scripts\pip.exe install -e .\privacy-filter
-# Rebuild the web interface so it matches the updated code
-cd frontend
-corepack pnpm install --frozen-lockfile
-corepack pnpm run build
-cd ..
+### Creating a release
+```powershell
+$env:GITHUB_TOKEN = "your-token"; python create_release.py; Remove-Item Env:GITHUB_TOKEN
 ```
-
-(The in-app "Update now" button does this rebuild automatically.)
-
-### Creating a New Release
-
-```bash
-# Set your GitHub token
-$env:GITHUB_TOKEN = "your-token-here"
-
-# Create release (reads VERSION and CHANGELOG.md automatically)
-python create_release.py
-```
-
-## Version History
-
-See [CHANGELOG.md](CHANGELOG.md) for a complete list of changes.
-
-## Automatic Update Checking
-
-The application checks for updates from two sources:
-
-1. **Model Updates** (HuggingFace): Checks for newer model versions
-2. **App Updates** (GitHub Releases): Checks for newer application versions with changelog
-
-Both checks are silent and only show notifications when updates are available.
-
-## Uninstall
-
-Run `uninstall.bat` to remove the application. Optionally remove the cached model from `~\.opf\privacy_filter`.
 
 ## License
 
-Apache 2.0 - See [LICENSE](privacy-filter/LICENSE) for details.
-
-## Credits
-
-Based on [OpenAI Privacy Filter](https://github.com/openai/privacy-filter).
+Apache 2.0 — see [LICENSE](privacy-filter/LICENSE). Based on
+[OpenAI Privacy Filter](https://github.com/openai/privacy-filter).

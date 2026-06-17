@@ -77,7 +77,14 @@ def create_release(token, version, changelog):
     """Create a GitHub release."""
     tag = f"v{version}"
     title = f"v{version}"
-    body = f"## What's New\n\n{changelog}\n\n---\n\n## Installation\n\nDownload and run `install.bat`."
+    body = (
+        f"## What's New\n\n{changelog}\n\n---\n\n"
+        "## Build the portable app\n\n"
+        "Clone the repo and run `build_portable.ps1` (PowerShell) to produce a "
+        "self-contained folder in `portable-build/`. Copy that folder anywhere "
+        "and double-click `Privacy Filter.vbs` — no Python/Node needed on the "
+        "target machine."
+    )
 
     data = json.dumps({
         "tag_name": tag,

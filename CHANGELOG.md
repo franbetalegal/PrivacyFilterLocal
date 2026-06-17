@@ -5,6 +5,25 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-06-04
+
+### Changed
+- **Unified into a single project.** The portable builder now lives in this repo
+  (`build_portable.ps1`) and packages the repo itself into `portable-build/`
+  (git-ignored). The separate `privacy-filter-portable` folder is gone — no more
+  duplicated/copied code to keep in sync.
+- **Portable-only distribution**: removed the venv-style installer
+  (`install.ps1`/`install.bat`/`start.bat`/`uninstall.bat`). Use
+  `build_portable.ps1` to produce the app, or the documented dev commands to run
+  from source.
+- `create_release.py` release notes now point to the portable build.
+- README rewritten around the single project (build portable / develop).
+
+### Notes
+- The portable build downloads CPU-only PyTorch + the `opf` package +
+  `requirements-server.txt` into an embeddable Python, reuses `frontend/dist`
+  (builds it with Node only if needed), and writes the windowless launchers.
+
 ## [2.1.0] - 2026-06-04
 
 ### Added
