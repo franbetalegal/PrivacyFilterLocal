@@ -1,0 +1,10 @@
+# Normalize line endings so cross-platform scripts always work.
+
+# Shell scripts MUST stay LF — a CRLF shebang breaks the interpreter on Linux.
+*.sh text eol=lf
+
+# Windows-only scripts stay CRLF.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.vbs text eol=crlf
+*.nsi text eol=crlf
