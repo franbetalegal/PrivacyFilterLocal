@@ -437,7 +437,10 @@ if not exist "%~dp0logs" mkdir "%~dp0logs"
 @echo off
 cd /d "%~dp0"
 $envBlock
-start "" "%~dp0python\pythonw.exe" -m server.main
+rem Single instance: only start the server if it is not already running on the
+rem port (avoids stacking hidden instances and reloading the model in RAM).
+"%~dp0python\python.exe" -c "import socket,sys;s=socket.socket();s.settimeout(1);r=s.connect_ex(('127.0.0.1',7860));s.close();sys.exit(0 if r==0 else 1)"
+if errorlevel 1 start "" "%~dp0python\pythonw.exe" -m server.main
 start "" "%~dp0app\loading.html"
 "@
     Set-Content -Path (Join-Path $OUT "launch.bat") -Value $launchBat -Encoding ASCII
@@ -464,6 +467,14 @@ echo ========================================
 echo   Privacy Filter - Portable (debug console)
 echo ========================================
 echo.
+"%~dp0python\python.exe" -c "import socket,sys;s=socket.socket();s.settimeout(1);r=s.connect_ex(('127.0.0.1',7860));s.close();sys.exit(0 if r==0 else 1)"
+if not errorlevel 1 (
+    echo A server is already running. Opening the app in your browser.
+    echo Use the Quit button in the app to stop it first if you want a fresh start.
+    start "" "%~dp0app\loading.html"
+    pause
+    exit /b 0
+)
 echo If Windows asks about the firewall, click "Allow access".
 echo The browser opens automatically when the server is ready.
 echo The first run downloads the model (~2.7 GB); progress shows in the app.

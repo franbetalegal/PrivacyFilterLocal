@@ -84,20 +84,34 @@ export async function shutdown(): Promise<void> {
   await fetch("/api/shutdown", { method: "POST" });
 }
 
-export async function redactText(text: string): Promise<RedactTextResult> {
+export async function redactText(
+  text: string,
+  signal?: AbortSignal,
+): Promise<RedactTextResult> {
   return jsonOrThrow(
     await fetch("/api/redact", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
+      signal,
     }),
   );
 }
 
-export async function redactFile(file: File): Promise<RedactFileResult> {
+export async function redactFile(
+  file: File,
+  signal?: AbortSignal,
+): Promise<RedactFileResult> {
   const form = new FormData();
   form.append("file", file);
-  return jsonOrThrow(await fetch("/api/redact-file", { method: "POST", body: form }));
+  return jsonOrThrow(
+    await fetch("/api/redact-file", { method: "POST", body: form, signal }),
+  );
+}
+
+/** True if the error is a fetch abort (user pressed Cancel). */
+export function isAbort(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "AbortError";
 }
 
 export function downloadUrl(token: string): string {

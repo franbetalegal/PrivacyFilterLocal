@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { redactFile, getHealth, downloadUrl, type DetectedSpan } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { redactFile, getHealth, isAbort, downloadUrl, type DetectedSpan } from "../api";
 import SpanList from "../components/SpanList";
 import Processing from "../components/Processing";
 
@@ -17,6 +17,7 @@ export default function FilesTab() {
   const [error, setError] = useState<string | null>(null);
   const [ran, setRan] = useState(false);
   const [modelReady, setModelReady] = useState(true);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     getHealth()
@@ -24,16 +25,22 @@ export default function FilesTab() {
       .catch(() => setModelReady(true));
   }, []);
 
+  function onCancel() {
+    abortRef.current?.abort();
+  }
+
   async function onProcess() {
     if (!file) {
       setError("Upload a file.");
       return;
     }
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     setError(null);
     setDownloadToken(null);
     try {
-      const res = await redactFile(file);
+      const res = await redactFile(file, controller.signal);
       setSpans(res.detected_spans);
       setElapsed(res.elapsed);
       setDownloadToken(res.download_token);
@@ -41,9 +48,14 @@ export default function FilesTab() {
       setRan(true);
       setModelReady(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isAbort(e)) {
+        setError(null); // user cancelled
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setLoading(false);
+      abortRef.current = null;
     }
   }
 
@@ -62,6 +74,11 @@ export default function FilesTab() {
         <button className="btn primary" onClick={onProcess} disabled={loading}>
           {loading ? "Processing…" : "Process File"}
         </button>
+        {loading && (
+          <button className="btn" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
       </div>
 
       {loading && (

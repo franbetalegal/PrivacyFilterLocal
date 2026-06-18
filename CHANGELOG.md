@@ -5,6 +5,25 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-06-04
+
+### Added
+- **Cancel** button while detecting (Text and Files tabs): aborts the request
+  (AbortController) and frees the UI immediately so you can pick the correct
+  input. `/api/redact-file` also checks for client disconnect after detection
+  and skips the redaction step (and download) when cancelled.
+- **Single instance**: the portable launcher (`launch.bat` / `start.bat`) checks
+  whether a server is already listening on the port and, if so, does NOT start a
+  second one — the loading page just reuses the running instance. Prevents
+  stacking hidden instances (and reloading the model in RAM) on repeated
+  double-clicks.
+
+### Notes
+- Closing the browser tab does not stop the server (it runs windowless). Use the
+  **Quit** button to stop it. A single in-flight model inference cannot be hard
+  -killed mid-pass (CPU/PyTorch), but Cancel returns control immediately and
+  skips the remaining work.
+
 ## [2.2.2] - 2026-06-04
 
 ### Fixed

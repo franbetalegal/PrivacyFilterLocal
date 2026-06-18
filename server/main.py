@@ -193,11 +193,12 @@ async def api_redact(req: RedactRequest) -> dict:
 
 
 @app.post("/api/redact-file")
-async def api_redact_file(file: UploadFile = File(...)) -> dict:
+async def api_redact_file(request: Request, file: UploadFile = File(...)) -> dict:
     """Detect PII in an uploaded file.
 
     For PDF/DOCX a redacted copy is produced and exposed via a one-time
     ``download_token``. The uploaded input is always deleted after processing.
+    If the client cancels (disconnects), the redaction step is skipped.
     """
     ext = Path(file.filename or "").suffix.lower()
     if ext not in TEXT_EXTS and ext not in DOC_EXTS:
@@ -224,6 +225,12 @@ async def api_redact_file(file: UploadFile = File(...)) -> dict:
         result = await inference.redact(text)
         elapsed = time.time() - start
         spans = result.detected_spans
+
+        # If the user cancelled while we were detecting, skip the (possibly slow)
+        # redaction step and don't create a download.
+        if await request.is_disconnected():
+            logger.info("redact-file cancelled by client; skipping redaction")
+            return {"cancelled": True}
 
         download_token = None
         download_name = None

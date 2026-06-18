@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { redactText, getHealth, type DetectedSpan } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { redactText, getHealth, isAbort, type DetectedSpan } from "../api";
 import SpanList from "../components/SpanList";
 import Processing from "../components/Processing";
 
@@ -21,6 +21,7 @@ export default function TextTab() {
   const [error, setError] = useState<string | null>(null);
   const [ran, setRan] = useState(false);
   const [modelReady, setModelReady] = useState(true);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     getHealth()
@@ -28,24 +29,35 @@ export default function TextTab() {
       .catch(() => setModelReady(true));
   }, []);
 
+  function onCancel() {
+    abortRef.current?.abort();
+  }
+
   async function onDetect() {
     if (!text.trim()) {
       setError("Enter some text.");
       return;
     }
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     setError(null);
     try {
-      const res = await redactText(text);
+      const res = await redactText(text, controller.signal);
       setRedacted(res.redacted_text);
       setSpans(res.detected_spans);
       setElapsed(res.elapsed);
       setRan(true);
       setModelReady(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isAbort(e)) {
+        setError(null); // user cancelled; just reset
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setLoading(false);
+      abortRef.current = null;
     }
   }
 
@@ -73,6 +85,11 @@ export default function TextTab() {
         <button className="btn primary" onClick={onDetect} disabled={loading}>
           {loading ? "Detecting…" : "Detect PII"}
         </button>
+        {loading && (
+          <button className="btn" onClick={onCancel}>
+            Cancel
+          </button>
+        )}
         <div className="examples">
           {EXAMPLES.map((ex, i) => (
             <button key={i} className="chip" onClick={() => setText(ex)}>
