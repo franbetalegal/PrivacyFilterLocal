@@ -64,10 +64,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # ubuntu-latest ships a global pnpm that conflicts with the pinned
+      # packageManager (pnpm@11.5.1) when invoked via corepack. Install the
+      # pinned version directly so pnpm runs without the version mismatch.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
       - name: Build frontend
         run: |
-          corepack pnpm -C frontend install --frozen-lockfile
-          corepack pnpm -C frontend run build
+          pnpm -C frontend install --frozen-lockfile
+          pnpm -C frontend run build
       - name: Assemble Linux tarball
         run: |
           VER="${{ needs.version.outputs.version }}"
