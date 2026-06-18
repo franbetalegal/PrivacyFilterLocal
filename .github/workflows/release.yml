@@ -37,8 +37,8 @@ jobs:
     needs: version
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
       - name: Install NSIS
@@ -50,7 +50,7 @@ jobs:
       - name: Build self-extracting .exe
         shell: powershell
         run: .\packaging\windows\make_exe.ps1 -Version ${{ needs.version.outputs.version }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows-exe
           path: dist/*.exe
@@ -60,16 +60,17 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
+      - uses: actions/checkout@v5
       # ubuntu-latest ships a global pnpm that conflicts with the pinned
       # packageManager (pnpm@11.5.1) when invoked via corepack. Install the
-      # pinned version directly so pnpm runs without the version mismatch.
-      - uses: pnpm/action-setup@v4
+      # pinned version directly, and BEFORE setup-node (v5 validates the package
+      # manager and fails if pnpm is not yet on PATH), so pnpm runs cleanly.
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: frontend/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
       - name: Build frontend
         run: |
           pnpm -C frontend install --frozen-lockfile
@@ -89,7 +90,7 @@ jobs:
           rm -rf "$STAGE/privacy-filter/.git" "$STAGE/privacy-filter/build" \
                  "$STAGE/privacy-filter/opf.egg-info"
           tar -czf "$STAGE.tar.gz" "$STAGE"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: linux-tarball
           path: PrivacyFilter-linux-*.tar.gz
@@ -99,15 +100,15 @@ jobs:
     needs: [version, windows, linux]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
       - name: Build release notes
         shell: bash
         run: |
           VER="${{ needs.version.outputs.version }}"
-          python - "$VER" > notes.md <<'PY'
+          python3 - "$VER" > notes.md <<'PY'
           import re, sys, pathlib
           ver = sys.argv[1]
           text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
