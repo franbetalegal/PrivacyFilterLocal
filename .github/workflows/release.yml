@@ -122,7 +122,7 @@ jobs:
             echo "- **Linux (technical users):** \`PrivacyFilter-linux-v${VER}.tar.gz\` — extract and run \`./run.sh\` (creates a virtualenv on first run)."
           } >> notes.md
       - name: Create / update release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.version.outputs.version }}
           name: v${{ needs.version.outputs.version }}
