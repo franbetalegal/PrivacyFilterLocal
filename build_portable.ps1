@@ -224,13 +224,23 @@ function Build-FrontendWithNode {
         return $false
     }
     $env:COREPACK_ENABLE_DOWNLOAD_PROMPT = "0"
+    # pnpm/corepack write notices (e.g. Node engine warnings) to stderr. With the
+    # script-wide ErrorActionPreference=Stop, PowerShell turns that stderr into a
+    # terminating NativeCommandError even when the command succeeds, so relax it
+    # here and rely on $LASTEXITCODE / the dist check instead.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     Push-Location $frontendSrc
-    Write-Info "Installing frontend packages (pnpm)..."
-    & corepack pnpm install --frozen-lockfile 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { & corepack pnpm install 2>&1 | Out-Null }
-    Write-Info "Building production bundle..."
-    & corepack pnpm run build 2>&1 | Out-Null
-    Pop-Location
+    try {
+        Write-Info "Installing frontend packages (pnpm)..."
+        & corepack pnpm install --frozen-lockfile 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { & corepack pnpm install 2>&1 | Out-Null }
+        Write-Info "Building production bundle..."
+        & corepack pnpm run build 2>&1 | Out-Null
+    } finally {
+        Pop-Location
+        $ErrorActionPreference = $prevEAP
+    }
     return (Test-Path (Join-Path $frontendSrc "dist\index.html"))
 }
 
