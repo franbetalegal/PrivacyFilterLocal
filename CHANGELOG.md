@@ -5,6 +5,34 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-06-18
+
+### Added
+- **One-click distribution.** Releases now ship ready-to-run downloads, so end
+  users no longer clone the repo or run a build command:
+  - **Windows:** a self-extracting `PrivacyFilter-Setup-vX.Y.Z.exe`. Double-click
+    it and it extracts the app into a `PrivacyFilter` subfolder **next to the
+    `.exe`** and launches automatically. The runtime folders (model/cache/temp/
+    logs) are not packed, so re-running it refreshes the app without wiping an
+    already-downloaded model.
+  - **Linux (technical users):** a `PrivacyFilter-linux-vX.Y.Z.tar.gz`. Extract
+    and run `./run.sh`, which creates a self-contained virtualenv on first run
+    and then starts the local server.
+- **Automated releases.** `.github/workflows/release.yml` builds both artifacts
+  on a `vX.Y.Z` tag (Windows + Linux runners) and attaches them to the GitHub
+  Release. Packaging recipes live under `packaging/windows/` and `packaging/linux/`.
+
+### Changed
+- **Update model** now checks HuggingFace *before* downloading: if the local
+  model is already up to date it reports so and downloads nothing. It still
+  downloads when there is a newer model, or when no model is installed yet, and
+  reports a network error (without downloading) if the check can't be made.
+
+### Fixed
+- The backend is now OS-agnostic: venv interpreter resolution handles
+  `Scripts\python.exe` (Windows) vs `bin/python` (Linux/macOS), and the post-update
+  frontend rebuild skips gracefully when Node/pnpm are absent (typical on Linux).
+
 ## [2.3.0] - 2026-06-04
 
 ### Added

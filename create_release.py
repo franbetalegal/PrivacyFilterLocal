@@ -79,11 +79,15 @@ def create_release(token, version, changelog):
     title = f"v{version}"
     body = (
         f"## What's New\n\n{changelog}\n\n---\n\n"
-        "## Build the portable app\n\n"
-        "Clone the repo and run `build_portable.ps1` (PowerShell) to produce a "
-        "self-contained folder in `portable-build/`. Copy that folder anywhere "
-        "and double-click `Privacy Filter.vbs` — no Python/Node needed on the "
-        "target machine."
+        "## Download\n\n"
+        f"- **Windows:** `PrivacyFilter-Setup-v{version}.exe` — double-click; it "
+        "extracts into a `PrivacyFilter` folder next to the .exe and starts "
+        "automatically.\n"
+        f"- **Linux (technical users):** `PrivacyFilter-linux-v{version}.tar.gz` — "
+        "extract and run `./run.sh`.\n\n"
+        "The first run downloads the model (~2.7 GB); progress is shown in the app.\n\n"
+        "_Artifacts are normally built and attached automatically by CI on tag "
+        "push (`.github/workflows/release.yml`)._"
     )
 
     data = json.dumps({

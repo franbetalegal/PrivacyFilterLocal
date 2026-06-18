@@ -1,0 +1,125 @@
+name: Release
+
+# Builds the distributable artifacts and publishes a GitHub Release whenever a
+# version tag (vX.Y.Z) is pushed:
+#   - Windows:  PrivacyFilter-Setup-vX.Y.Z.exe  (self-extracting launcher)
+#   - Linux:    PrivacyFilter-linux-vX.Y.Z.tar.gz  (extract + ./run.sh)
+# Can also be run manually (workflow_dispatch) with an explicit version.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without leading v (e.g. 2.4.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install NSIS
+        continue-on-error: true
+        run: choco install nsis -y --no-progress
+      - name: Build portable package
+        shell: powershell
+        run: .\build_portable.ps1 -RebuildFrontend
+      - name: Build self-extracting .exe
+        shell: powershell
+        run: .\packaging\windows\make_exe.ps1 -Version ${{ needs.version.outputs.version }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/*.exe
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build frontend
+        run: |
+          corepack pnpm -C frontend install --frozen-lockfile
+          corepack pnpm -C frontend run build
+      - name: Assemble Linux tarball
+        run: |
+          VER="${{ needs.version.outputs.version }}"
+          STAGE="PrivacyFilter-linux-v$VER"
+          mkdir -p "$STAGE/frontend"
+          cp -r server privacy-filter app_update.py model_update.py \
+                requirements-server.txt VERSION "$STAGE"/
+          cp -r frontend/dist "$STAGE/frontend/dist"
+          cp packaging/linux/run.sh "$STAGE/run.sh"
+          chmod +x "$STAGE/run.sh"
+          # Strip build noise from the bundled opf package copy.
+          find "$STAGE" -name '__pycache__' -type d -prune -exec rm -rf {} +
+          rm -rf "$STAGE/privacy-filter/.git" "$STAGE/privacy-filter/build" \
+                 "$STAGE/privacy-filter/opf.egg-info"
+          tar -czf "$STAGE.tar.gz" "$STAGE"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-tarball
+          path: PrivacyFilter-linux-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [version, windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Build release notes
+        shell: bash
+        run: |
+          VER="${{ needs.version.outputs.version }}"
+          python - "$VER" > notes.md <<'PY'
+          import re, sys, pathlib
+          ver = sys.argv[1]
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          m = re.search(rf"## \[{re.escape(ver)}\].*?(?=## \[|\Z)", text, re.DOTALL)
+          print(m.group(0).strip() if m else f"Release v{ver}.")
+          PY
+          {
+            echo ""
+            echo "## Downloads"
+            echo "- **Windows:** \`PrivacyFilter-Setup-v${VER}.exe\` — double-click; it extracts into a \`PrivacyFilter\` folder next to the .exe and starts automatically. The first run downloads the model (~2.7 GB)."
+            echo "- **Linux (technical users):** \`PrivacyFilter-linux-v${VER}.tar.gz\` — extract and run \`./run.sh\` (creates a virtualenv on first run)."
+          } >> notes.md
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: v${{ needs.version.outputs.version }}
+          body_path: notes.md
+          files: |
+            artifacts/windows-exe/*.exe
+            artifacts/linux-tarball/*.tar.gz

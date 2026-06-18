@@ -275,7 +275,10 @@ def restart_app() -> None:
     import time
 
     project_dir = Path(__file__).parent
-    venv_python = project_dir / ".venv" / "Scripts" / "python.exe"
+    if os.name == "nt":
+        venv_python = project_dir / ".venv" / "Scripts" / "python.exe"
+    else:
+        venv_python = project_dir / ".venv" / "bin" / "python"
 
     python = str(venv_python) if venv_python.exists() else sys.executable
 

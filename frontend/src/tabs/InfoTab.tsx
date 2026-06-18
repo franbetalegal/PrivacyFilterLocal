@@ -18,7 +18,7 @@ export default function InfoTab() {
 
   async function onUpdateModel() {
     setBusy(true);
-    setMsg("Checking / downloading model update…");
+    setMsg("Checking for model updates…");
     try {
       const res = await installModelUpdate();
       setMsg(res.message);
