@@ -14,3 +14,9 @@ python-docx
 # layer are just left blank and reported in the warning.
 pytesseract
 Pillow
+# Spanish NER (adds recall on top of the primarily-English opf model).
+# After installing this you also need the model:
+#     python -m spacy download es_core_news_lg
+# spaCy is imported lazily; if the model is missing the app degrades to
+# opf + deterministic recognizers with a warning in the logs.
+spacy

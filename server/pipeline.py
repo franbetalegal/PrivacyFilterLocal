@@ -27,11 +27,11 @@ from dataclasses import dataclass
 from opf._api import RedactionResult
 from opf._core.runtime import DetectedSpan
 
-from server import recognizers_es
+from server import ner_es, recognizers_es
 
 
 # Human-readable Spanish labels used in placeholders and DetectedSpan.label.
-# opf labels are lowercased; deterministic labels come already prefixed.
+# opf labels are lowercased; our deterministic and NER labels come prefixed.
 _FRIENDLY_LABEL: dict[str, str] = {
     "private_person": "NOMBRE",
     "private_email": "EMAIL",
@@ -51,6 +51,12 @@ _FRIENDLY_LABEL: dict[str, str] = {
     "ES_LICENSE_PLATE": "MATRICULA",
     "ES_CADASTRAL_REF": "CATASTRO",
     "ES_CREDIT_CARD": "TARJETA",
+    # Spanish NER (spaCy) — grouped with opf's equivalents for consistent
+    # pseudonymization: a person detected by NER and by opf gets the same token.
+    "ES_NER_PER": "NOMBRE",
+    "ES_NER_LOC": "LUGAR",
+    "ES_NER_ORG": "ORGANIZACION",
+    "ES_NER_MISC": "OTRO",
 }
 
 # Labels whose entity value is a structured identifier: normalize by stripping
@@ -166,12 +172,28 @@ def _deterministic_raw_spans(text: str) -> list[_RawSpan]:
     ]
 
 
-def merge_and_redact(text: str, opf_result: RedactionResult) -> RedactionResult:
-    """Fuse opf + deterministic spans and rebuild a ``RedactionResult``.
+def _ner_raw_spans(text: str) -> list[_RawSpan]:
+    """Statistical spaCy Spanish NER; empty if the model isn't installed."""
+    return [
+        _RawSpan(
+            start=r.start, end=r.end, label=r.entity_type,
+            text=r.text, source="ner", score=r.score,
+        )
+        for r in ner_es.analyze(text)
+    ]
 
-    Exposed as a pure function so tests can inject a stub ``opf_result``.
+
+def merge_and_redact(text: str, opf_result: RedactionResult) -> RedactionResult:
+    """Fuse opf + deterministic + NER spans and rebuild a ``RedactionResult``.
+
+    Exposed as a pure function so tests can inject a stub ``opf_result`` and
+    (via monkey-patching ``ner_es.analyze``) a stub NER result too.
     """
-    combined = _opf_raw_spans(opf_result.detected_spans) + _deterministic_raw_spans(text)
+    combined = (
+        _opf_raw_spans(opf_result.detected_spans)
+        + _deterministic_raw_spans(text)
+        + _ner_raw_spans(text)
+    )
     merged = _resolve_overlaps(combined)
     tokens = _assign_placeholders(merged)
     redacted_text, detected = _build_output(text, merged, tokens)

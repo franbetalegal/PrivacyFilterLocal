@@ -15,11 +15,20 @@ sys.path.insert(0, str(ROOT / "privacy-filter"))
 opf_api = pytest.importorskip("opf._api")
 opf_runtime = pytest.importorskip("opf._core.runtime")
 
-from server import pipeline  # noqa: E402
+from server import ner_es, pipeline  # noqa: E402
 from server.pipeline import merge_and_redact  # noqa: E402
 
 RedactionResult = opf_api.RedactionResult
 DetectedSpan = opf_runtime.DetectedSpan
+
+
+@pytest.fixture(autouse=True)
+def _disable_ner_by_default(monkeypatch):
+    """Every existing test predates NER; stub it out to keep them deterministic.
+
+    Individual tests below opt back in by overriding ``ner_es.analyze``.
+    """
+    monkeypatch.setattr(ner_es, "analyze", lambda text: [])
 
 
 def _stub_opf_result(text: str, spans):
@@ -152,3 +161,119 @@ def test_empty_text_produces_empty_result():
     assert result.redacted_text == ""
     assert result.detected_spans == ()
     assert result.summary["span_count"] == 0
+
+
+# --- NER layer (stubbed, no spaCy dependency required) --------------------
+
+def _ner_span(text: str, needle: str, entity_type: str, score: float = 0.7):
+    """Build a fake NERSpan matching :class:`server.ner_es.NERSpan`'s shape."""
+    start = text.index(needle)
+    return ner_es.NERSpan(
+        start=start,
+        end=start + len(needle),
+        entity_type=entity_type,
+        score=score,
+        text=needle,
+    )
+
+
+def test_ner_only_source_produces_spans(monkeypatch):
+    """When opf misses a name but NER catches it, the pipeline still redacts."""
+    text = "El testigo, Juan García, declaró ayer."
+    monkeypatch.setattr(
+        ner_es, "analyze",
+        lambda t: [_ner_span(t, "Juan García", "ES_NER_PER")],
+    )
+    opf = _stub_opf_result(text, [])
+    result = merge_and_redact(text, opf)
+    labels = [s.label for s in result.detected_spans]
+    assert "NOMBRE" in labels
+    assert "Juan García" not in result.redacted_text
+
+
+def test_ner_and_opf_agree_yield_one_span_and_one_token(monkeypatch):
+    """Same person detected by both sources → one merged token, no duplicates."""
+    text = "Juan García firmó."
+    monkeypatch.setattr(
+        ner_es, "analyze",
+        lambda t: [_ner_span(t, "Juan García", "ES_NER_PER")],
+    )
+    opf = _stub_opf_result(text, [
+        (0, 11, "private_person", "Juan García"),
+    ])
+    result = merge_and_redact(text, opf)
+    # Overlap resolver keeps exactly one span; friendly label unifies both
+    # sources under NOMBRE so consumers can't tell which fired.
+    assert len(result.detected_spans) == 1
+    assert result.detected_spans[0].label == "NOMBRE"
+    assert result.detected_spans[0].placeholder == "[NOMBRE_1]"
+
+
+def test_ner_person_and_opf_person_share_placeholder(monkeypatch):
+    """A person mentioned twice — once by opf, once by NER — is one entity."""
+    text = "Juan García firmó. Después, Juan García lo devolvió."
+    second = text.index("Juan García", 12)
+    monkeypatch.setattr(
+        ner_es, "analyze",
+        lambda t: [ner_es.NERSpan(
+            start=second, end=second + 11,
+            entity_type="ES_NER_PER", score=0.7, text="Juan García",
+        )],
+    )
+    # opf catches only the first occurrence.
+    opf = _stub_opf_result(text, [
+        (0, 11, "private_person", "Juan García"),
+    ])
+    result = merge_and_redact(text, opf)
+    tokens = [s.placeholder for s in result.detected_spans]
+    assert tokens == ["[NOMBRE_1]", "[NOMBRE_1]"]
+
+
+def test_ner_location_yields_lugar_placeholder(monkeypatch):
+    text = "El juzgado de Madrid resuelve."
+    monkeypatch.setattr(
+        ner_es, "analyze",
+        lambda t: [_ner_span(t, "Madrid", "ES_NER_LOC")],
+    )
+    opf = _stub_opf_result(text, [])
+    result = merge_and_redact(text, opf)
+    assert any(s.label == "LUGAR" and s.placeholder == "[LUGAR_1]"
+               for s in result.detected_spans)
+
+
+def test_ner_organization_yields_organizacion_placeholder(monkeypatch):
+    text = "Comparece ACME S.L. ante el juzgado."
+    monkeypatch.setattr(
+        ner_es, "analyze",
+        lambda t: [_ner_span(t, "ACME S.L.", "ES_NER_ORG")],
+    )
+    opf = _stub_opf_result(text, [])
+    result = merge_and_redact(text, opf)
+    assert any(s.label == "ORGANIZACION"
+               and s.placeholder == "[ORGANIZACION_1]"
+               for s in result.detected_spans)
+
+
+def test_deterministic_dni_wins_over_ner_overlap(monkeypatch):
+    """A DNI-shaped string tagged as PER by NER must still be tagged DNI.
+
+    Deterministic validation is stronger evidence than statistical guessing.
+    """
+    text = "Comparece 12345678Z ante el juzgado."
+    monkeypatch.setattr(
+        ner_es, "analyze",
+        lambda t: [_ner_span(t, "12345678Z", "ES_NER_PER")],
+    )
+    opf = _stub_opf_result(text, [])
+    result = merge_and_redact(text, opf)
+    labels = [s.label for s in result.detected_spans]
+    assert labels == ["DNI"]
+
+
+def test_missing_spacy_degrades_gracefully(monkeypatch):
+    """If ner_es.analyze raises or returns [], the pipeline still works."""
+    monkeypatch.setattr(ner_es, "analyze", lambda t: [])
+    text = "El DNI 12345678Z aparece aquí."
+    opf = _stub_opf_result(text, [])
+    result = merge_and_redact(text, opf)
+    assert any(s.label == "DNI" for s in result.detected_spans)
