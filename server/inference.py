@@ -167,8 +167,14 @@ def status() -> dict:
 
 
 def _redact_sync(text: str):
-    """Blocking redaction used inside the inference thread pool."""
-    return get_model().redact(text)
+    """Blocking redaction used inside the inference thread pool.
+
+    Delegates to :mod:`server.pipeline`, which combines the opf model with the
+    Spanish deterministic recognizers and applies consistent pseudonymization.
+    """
+    from server import pipeline
+
+    return pipeline.redact(get_model(), text)
 
 
 async def redact(text: str):
