@@ -7,3 +7,10 @@ uvicorn[standard]
 python-multipart
 PyMuPDF
 python-docx
+# OCR fallback for scanned PDFs. Also requires the tesseract binary and the
+# 'spa' traineddata to be installed on the host (brew install tesseract
+# tesseract-lang; apt install tesseract-ocr tesseract-ocr-spa). Both are
+# imported lazily so the app still works without OCR — pages without a text
+# layer are just left blank and reported in the warning.
+pytesseract
+Pillow

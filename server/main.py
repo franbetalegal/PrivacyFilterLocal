@@ -234,6 +234,7 @@ async def api_redact_file(request: Request, file: UploadFile = File(...)) -> dic
 
         download_token = None
         download_name = None
+        leaked: list[str] = []
         if spans and ext in DOC_EXTS:
             if ext == ".pdf":
                 out_path = await inference.run_blocking(
@@ -243,16 +244,34 @@ async def api_redact_file(request: Request, file: UploadFile = File(...)) -> dic
                 out_path = await inference.run_blocking(
                     redaction.redact_docx, in_path, spans
                 )
+            # Post-redaction: verify no original PII survived in the output.
+            from server import verify
+            leaked = await inference.run_blocking(
+                verify.find_leaks, out_path, ext, spans
+            )
+            if leaked:
+                logger.warning(
+                    "Redaction verification: %d PII string(s) leaked in %s: %r",
+                    len(leaked), Path(file.filename).name, leaked[:5],
+                )
             # Keep the original name with an _ANONIMIZED tag so the user can
             # tell the redacted copy apart without renaming it.
             download_name = f"{Path(file.filename).stem}_ANONIMIZED{ext}"
             download_token = _register_download(out_path, download_name)
 
         payload = result.to_dict()
+        warning = payload.get("warning")
+        if leaked:
+            leak_msg = (
+                f"Se detectaron {len(leaked)} fragmento(s) de PII que no pudieron "
+                "eliminarse del documento anonimizado. Revise el resultado antes de compartirlo."
+            )
+            warning = f"{warning}\n{leak_msg}" if warning else leak_msg
         return {
             "detected_spans": payload["detected_spans"],
             "summary": payload["summary"],
-            "warning": payload.get("warning"),
+            "warning": warning,
+            "leaked_pii_count": len(leaked),
             "elapsed": round(elapsed, 3),
             "download_token": download_token,
             "download_name": download_name,

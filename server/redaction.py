@@ -1,8 +1,17 @@
 """Document text extraction and PII redaction helpers.
 
-Moved verbatim (logic-wise) from the old ``app_local.py`` so the FastAPI backend
-reuses the exact same, already-tested redaction behaviour for text, PDF and
-DOCX. No functional changes versus the Gradio version.
+Public entry points (kept stable for :mod:`server.main`):
+
+    - :func:`extract_text_from_pdf`  → flat string, or ``None`` on failure.
+    - :func:`extract_text_from_docx` → flat string, or ``None`` on failure.
+    - :func:`redact_pdf`             → path to a redacted copy.
+    - :func:`redact_docx`            → path to a redacted copy.
+
+Since Phase 4, extraction covers every OOXML text container (tables,
+headers/footers, text boxes, comments) and every PDF page — falling back to
+OCR (Tesseract, ``lang=spa+eng``) when a page has no text layer. Redaction
+translates the pipeline's character-offset spans back into rectangles via a
+per-char coordinate map, so line-broken or hyphenated PII is still covered.
 """
 
 from __future__ import annotations
@@ -10,6 +19,8 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+
+from server import docx_ops, pdf_ops
 
 logger = logging.getLogger("privacy_filter.redaction")
 
@@ -25,66 +36,28 @@ def temp_output_path(input_path: str, ext: str) -> str:
 
 
 def extract_text_from_pdf(pdf_path: str) -> str | None:
-    """Extract all text from a PDF, or ``None`` on failure."""
-    try:
-        import fitz
-
-        doc = fitz.open(pdf_path)
-        try:
-            pages = [page.get_text() for page in doc]
-        finally:
-            doc.close()
-        return "\n".join(pages)
-    except Exception as e:
-        logger.error("PDF read failed: %s", e)
-    return None
+    """Extract all text from a PDF (OCRs pages that lack a text layer)."""
+    return pdf_ops.extract_text(pdf_path)
 
 
 def extract_text_from_docx(docx_path: str) -> str | None:
-    """Extract all paragraph text from a DOCX, or ``None`` on failure."""
-    try:
-        from docx import Document
-
-        doc = Document(docx_path)
-        return "\n".join(p.text for p in doc.paragraphs)
-    except Exception as e:
-        logger.error("DOCX read failed: %s", e)
-    return None
+    """Extract text from every container in the DOCX."""
+    return docx_ops.extract_text(docx_path)
 
 
 def redact_pdf(input_path: str, detected_spans) -> str:
-    """Produce a redacted copy of the PDF and return its path."""
-    import fitz
-
+    """Produce a redacted copy of the PDF using offset-based coordinate lookup."""
     out_path = temp_output_path(input_path, ".pdf")
-    doc = fitz.open(input_path)
-    try:
-        for page in doc:
-            for span in detected_spans:
-                old_text = span.text
-                new_text = span.placeholder
-                if not old_text or old_text == new_text:
-                    continue
-                results = page.search_for(old_text)
-                for rect in results:
-                    page.add_redact_annot(
-                        rect, text=new_text, fontsize=9,
-                        fontname="helv", fill=(1, 1, 1), text_color=(0, 0, 0),
-                        align=0,
-                    )
-            page.apply_redactions()
-        doc.save(out_path)
-    finally:
-        doc.close()
+    pdf_ops.redact_by_offsets(input_path, out_path, detected_spans)
     return out_path
 
 
 def redact_docx(input_path: str, detected_spans) -> str:
-    """Apply PII redactions to a DOCX while preserving run-level formatting.
+    """Apply PII redactions to every text container in the DOCX.
 
-    Replaces ``old_text`` with ``new_text`` inside each affected paragraph by
-    splitting the original runs at match boundaries, so the surrounding runs
-    keep their original fonts, sizes, bold/italic flags, etc.
+    Preserves the run-level formatting inside each container by splitting the
+    matching runs at the placeholder boundary (see
+    :func:`_replace_text_in_paragraph`).
     """
     from docx import Document
 
@@ -95,10 +68,9 @@ def redact_docx(input_path: str, detected_spans) -> str:
         new_text = span.placeholder
         if not old_text or old_text == new_text:
             continue
-        for para in doc.paragraphs:
-            if old_text not in para.text:
-                continue
-            _replace_text_in_paragraph(para, old_text, new_text)
+        for para in docx_ops.iter_all_paragraphs(doc):
+            if old_text in para.text:
+                _replace_text_in_paragraph(para, old_text, new_text)
     doc.save(out_path)
     return out_path
 
