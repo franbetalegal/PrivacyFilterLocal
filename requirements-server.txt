@@ -14,9 +14,14 @@ python-docx
 # layer are just left blank and reported in the warning.
 pytesseract
 Pillow
-# Spanish NER (adds recall on top of the primarily-English opf model).
-# After installing this you also need the model:
+# Iberian NER (adds recall on top of the primarily-English opf model).
+# After installing this you also need the models:
 #     python -m spacy download es_core_news_lg
-# spaCy is imported lazily; if the model is missing the app degrades to
-# opf + deterministic recognizers with a warning in the logs.
+#     python -m spacy download ca_core_news_lg   # for Catalan documents
+# spaCy is imported lazily; if a model is missing the app degrades to whatever
+# models are available (Spanish only, Catalan only, or opf + deterministic).
 spacy
+# Language detection so we run only the NER model matching each document's
+# language and avoid tagging Catalan common words as Spanish person names
+# (and vice versa). Very small pure-Python package.
+langdetect

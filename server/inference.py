@@ -102,6 +102,7 @@ def get_model():
                     progress_callback=lambda msg, pct: logger.info("%s", msg)
                 )
 
+            _configure_torch_threads()
             logger.info("Loading Privacy Filter model...")
             _model = OPF(device="cpu")
             logger.info("Model loaded")
@@ -109,6 +110,25 @@ def get_model():
             return _model
         finally:
             _state["loading"] = False
+
+
+def _configure_torch_threads() -> None:
+    """Cap torch's CPU intra-op parallelism to the shared core budget.
+
+    Model inference on CPU is the heaviest single stage; letting torch use the
+    reserved-core-aware budget (rather than every core) keeps the host
+    responsive while still using the cores we're allowed. Best-effort: torch
+    only honors ``set_num_threads`` before the first parallel op runs, which is
+    why this is called just before the model is constructed.
+    """
+    from server import concurrency
+
+    try:
+        import torch
+
+        torch.set_num_threads(concurrency.worker_count())
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not set torch thread count: %s", exc)
 
 
 def reset_model() -> None:

@@ -152,14 +152,37 @@ def _build_output(
     return "".join(pieces), detected
 
 
+# opf labels whose spans are statistical guesses (not structurally validated)
+# and should therefore go through the same false-positive / trimming filter as
+# NER spans. Structured labels (private_email, private_url, secret, account
+# _number) already have well-defined shapes so we let them through untouched.
+_OPF_STATISTICAL_LABELS = frozenset({
+    "private_person", "private_address", "private_date",
+})
+
+
 def _opf_raw_spans(opf_spans: tuple) -> list[_RawSpan]:
-    return [
-        _RawSpan(
-            start=s.start, end=s.end, label=s.label,
-            text=s.text, source="opf", score=0.85,
-        )
-        for s in opf_spans
-    ]
+    result: list[_RawSpan] = []
+    for s in opf_spans:
+        text, start, end = s.text, s.start, s.end
+        if s.label in _OPF_STATISTICAL_LABELS:
+            # Check on original first (catches public-phrase / filename /
+            # single-token stoplist before trimming can distort the match).
+            if ner_es.is_probably_false_positive(text, strict=False):
+                continue
+            trimmed, dropped = ner_es.trim_trailing_role_words(text)
+            if dropped:
+                text = trimmed
+                end -= dropped
+                if end <= start:
+                    continue
+                if ner_es.is_probably_false_positive(text, strict=False):
+                    continue
+        result.append(_RawSpan(
+            start=start, end=end, label=s.label,
+            text=text, source="opf", score=0.85,
+        ))
+    return result
 
 
 def _deterministic_raw_spans(text: str) -> list[_RawSpan]:

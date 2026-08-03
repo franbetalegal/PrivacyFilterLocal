@@ -150,3 +150,91 @@ def test_redact_empty_spans_is_noop(tmp_path: Path):
     pdf_ops.redact_by_offsets(str(pdf), str(out), [])
     assert out.exists()
     assert "Content without PII." in pdf_ops.extract_text(str(out))
+
+
+# --- Parallel page extraction ----------------------------------------------
+
+@pytest.mark.parametrize("n, workers, expected", [
+    (10, 4, [(0, 3), (3, 6), (6, 8), (8, 10)]),  # balanced, remainder up front
+    (5, 5, [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]),
+    (2, 8, [(0, 1), (1, 2)]),                      # never more ranges than pages
+    (1, 4, [(0, 1)]),
+    (6, 3, [(0, 2), (2, 4), (4, 6)]),
+])
+def test_split_ranges(n, workers, expected):
+    assert pdf_ops._split_ranges(n, workers) == expected
+
+
+def test_split_ranges_covers_everything_without_overlap():
+    ranges = pdf_ops._split_ranges(17, 4)
+    covered = []
+    for start, end in ranges:
+        covered.extend(range(start, end))
+    assert covered == list(range(17))
+
+
+def _write_multipage(tmp_path: Path, pages: list[str]) -> Path:
+    doc = fitz.open()
+    for line in pages:
+        page = doc.new_page(width=595, height=842)
+        page.insert_text((72, 72), line, fontsize=12, fontname="helv")
+    out = tmp_path / "multi.pdf"
+    doc.save(str(out))
+    doc.close()
+    return out
+
+
+def test_parallel_and_sequential_extraction_match(tmp_path: Path, monkeypatch):
+    """A 4-page doc must extract identically whether run parallel or sequential."""
+    pages = [
+        "Pagina uno con DNI 12345678Z.",
+        "Pagina dos con IBAN ES9121000418450200051332.",
+        "Pagina tres con nombre Juan Garcia.",
+        "Pagina cuatro final.",
+    ]
+    pdf = _write_multipage(tmp_path, pages)
+
+    # Force sequential.
+    monkeypatch.setattr("server.concurrency.worker_count", lambda: 1)
+    seq = pdf_ops.extract_with_map(str(pdf))
+
+    # Force parallel: 4 workers AND drop the OCR-page gate to 0 so text-layer
+    # pages take the parallel branch (avoids needing scanned fixtures/Tesseract).
+    monkeypatch.setattr("server.concurrency.worker_count", lambda: 4)
+    monkeypatch.setattr(pdf_ops, "_MIN_OCR_PAGES_FOR_PARALLEL", 0)
+    par = pdf_ops.extract_with_map(str(pdf))
+
+    assert seq is not None and par is not None
+    seq_text, seq_coords = seq
+    par_text, par_coords = par
+    assert seq_text == par_text
+    assert len(seq_coords) == len(par_coords)
+    # Rect coordinates must line up too (compare the non-None ones).
+    for a, b in zip(seq_coords, par_coords):
+        assert a.page_index == b.page_index
+        if a.rect is None:
+            assert b.rect is None
+        else:
+            assert abs(a.rect.x0 - b.rect.x0) < 0.01
+            assert abs(a.rect.y0 - b.rect.y0) < 0.01
+
+
+def test_parallel_extraction_offsets_still_redact(tmp_path: Path, monkeypatch):
+    """After parallel extraction, offset-based redaction must still work."""
+    pages = [f"Pagina {i} con DNI 12345678Z incluida." for i in range(4)]
+    pdf = _write_multipage(tmp_path, pages)
+    monkeypatch.setattr("server.concurrency.worker_count", lambda: 4)
+    monkeypatch.setattr(pdf_ops, "_MIN_OCR_PAGES_FOR_PARALLEL", 0)
+
+    text, _ = pdf_ops.extract_with_map(str(pdf))
+    # Redact every occurrence of the DNI across all pages.
+    spans = []
+    idx = text.find("12345678Z")
+    while idx != -1:
+        spans.append(_Span(idx, idx + 9, "12345678Z", "[DNI_1]"))
+        idx = text.find("12345678Z", idx + 1)
+    assert len(spans) == 4
+
+    out = tmp_path / "out.pdf"
+    pdf_ops.redact_by_offsets(str(pdf), str(out), spans)
+    assert "12345678Z" not in pdf_ops.extract_text(str(out))
