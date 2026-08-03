@@ -1,0 +1,263 @@
+"""Deterministic recognizers for Spanish identifiers.
+
+Each recognizer combines a regex with a check-digit / structural validator
+(DNI letter, CIF control, IBAN mod-97, Luhn, Seguridad Social mod-97) so the
+match is confirmed before a span is emitted. This drives false-positive rates
+close to zero for identifier types that carry their own control digit.
+
+The public entry point is ``analyze(text) -> list[Recognition]``. The module
+is intentionally standalone (pure Python, no NLP deps) so Phase 1 does not
+require any model download. The ``Recognition`` shape and the recognizer
+interface (``pattern``, ``validator``, ``context``, ``score``) mirror
+Microsoft Presidio's ``RecognizerResult`` / ``PatternRecognizer`` so the
+catalog can be adapted to a Presidio ``AnalyzerEngine`` in Phase 3 (ensemble
+with a Spanish NER) without touching detections.
+
+Entities produced:
+    ES_DNI, ES_NIE, ES_NIF_CIF, ES_IBAN, ES_SSN,
+    ES_PHONE, ES_POSTAL_CODE, ES_LICENSE_PLATE,
+    ES_CADASTRAL_REF, ES_CREDIT_CARD
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Callable
+
+
+@dataclass(frozen=True)
+class Recognition:
+    """One validated span produced by a recognizer."""
+
+    start: int
+    end: int
+    entity_type: str
+    score: float
+    text: str
+
+
+# --- Validators ------------------------------------------------------------
+
+_DNI_LETTERS = "TRWAGMYFPDXBNJZSQVHLCKE"
+_NIE_PREFIX = {"X": "0", "Y": "1", "Z": "2"}
+_CIF_CONTROL_LETTERS = "JABCDEFGHI"
+_CIF_ONLY_LETTER = frozenset("KPQRSNW")
+_CIF_ONLY_DIGIT = frozenset("ABEH")
+
+
+def validate_dni(text: str) -> bool:
+    """Validate a Spanish DNI (8 digits + control letter)."""
+    s = re.sub(r"[\s.-]", "", text).upper()
+    if len(s) != 9 or not s[:8].isdigit():
+        return False
+    return _DNI_LETTERS[int(s[:8]) % 23] == s[8]
+
+
+def validate_nie(text: str) -> bool:
+    """Validate a Spanish NIE (X/Y/Z + 7 digits + control letter)."""
+    s = re.sub(r"[\s.-]", "", text).upper()
+    if len(s) != 9 or s[0] not in _NIE_PREFIX or not s[1:8].isdigit():
+        return False
+    return _DNI_LETTERS[int(_NIE_PREFIX[s[0]] + s[1:8]) % 23] == s[8]
+
+
+def validate_cif(text: str) -> bool:
+    """Validate a Spanish CIF (legal entity tax id)."""
+    s = re.sub(r"[\s.-]", "", text).upper()
+    if len(s) != 9 or s[0] not in "ABCDEFGHJKLMNPQRSUVW":
+        return False
+    digits = s[1:8]
+    if not digits.isdigit():
+        return False
+    total = 0
+    for i, ch in enumerate(digits):
+        n = int(ch)
+        if i % 2 == 0:  # odd positions in 1-indexed → doubled + digit-summed
+            d = n * 2
+            total += (d // 10) + (d % 10)
+        else:
+            total += n
+    control_digit = (10 - (total % 10)) % 10
+    control_letter = _CIF_CONTROL_LETTERS[control_digit]
+    control = s[8]
+    if s[0] in _CIF_ONLY_DIGIT:
+        return control == str(control_digit)
+    if s[0] in _CIF_ONLY_LETTER:
+        return control == control_letter
+    return control == str(control_digit) or control == control_letter
+
+
+def validate_iban(text: str) -> bool:
+    """Validate any IBAN via the ISO 13616 mod-97 check."""
+    s = re.sub(r"\s", "", text).upper()
+    if not (15 <= len(s) <= 34) or not s[:2].isalpha() or not s[2:4].isdigit():
+        return False
+    rearranged = s[4:] + s[:4]
+    numeric: list[str] = []
+    for ch in rearranged:
+        if ch.isdigit():
+            numeric.append(ch)
+        elif "A" <= ch <= "Z":
+            numeric.append(str(ord(ch) - 55))
+        else:
+            return False
+    try:
+        return int("".join(numeric)) % 97 == 1
+    except ValueError:
+        return False
+
+
+def validate_ss(text: str) -> bool:
+    """Validate a Spanish Seguridad Social affiliation number (12 digits, mod-97)."""
+    s = re.sub(r"[\s/.-]", "", text)
+    if len(s) != 12 or not s.isdigit():
+        return False
+    return int(s[:10]) % 97 == int(s[10:])
+
+
+def validate_luhn(text: str) -> bool:
+    """Validate a payment-card PAN via the Luhn algorithm."""
+    s = re.sub(r"[\s-]", "", text)
+    if not (13 <= len(s) <= 19) or not s.isdigit():
+        return False
+    total = 0
+    for i, ch in enumerate(reversed(s)):
+        n = int(ch)
+        if i % 2 == 1:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+    return total % 10 == 0
+
+
+# --- Recognizer catalog ----------------------------------------------------
+
+@dataclass(frozen=True)
+class _Recognizer:
+    entity_type: str
+    pattern: re.Pattern
+    score: float
+    validator: Callable[[str], bool] | None
+    context: tuple[str, ...] = ()
+
+
+def _re(pat: str) -> re.Pattern:
+    return re.compile(pat)
+
+
+_RECOGNIZERS: tuple[_Recognizer, ...] = (
+    _Recognizer(
+        entity_type="ES_DNI",
+        pattern=_re(r"\b\d{8}[-.\s]?[A-HJ-NP-TV-Z]\b"),
+        score=0.9,
+        validator=validate_dni,
+        context=("dni", "documento", "identidad", "nif"),
+    ),
+    _Recognizer(
+        entity_type="ES_NIE",
+        pattern=_re(r"\b[XYZ][-.\s]?\d{7}[-.\s]?[A-HJ-NP-TV-Z]\b"),
+        score=0.9,
+        validator=validate_nie,
+        context=("nie", "residente", "extranjero"),
+    ),
+    _Recognizer(
+        entity_type="ES_NIF_CIF",
+        pattern=_re(r"\b[ABCDEFGHJKLMNPQRSUVW]\d{7}[0-9A-J]\b"),
+        score=0.9,
+        validator=validate_cif,
+        context=("cif", "nif", "sociedad", "empresa", "s.a", "s.l"),
+    ),
+    _Recognizer(
+        entity_type="ES_IBAN",
+        pattern=_re(r"\bES\d{2}(?:[\s-]?\d{4}){4}[\s-]?\d{4}\b"),
+        score=0.9,
+        validator=validate_iban,
+        context=("iban", "cuenta", "bancaria", "bancario", "corriente"),
+    ),
+    _Recognizer(
+        entity_type="ES_SSN",
+        pattern=_re(r"\b\d{2}[\s/.-]?\d{8}[\s/.-]?\d{2}\b"),
+        score=0.85,
+        validator=validate_ss,
+        context=("seguridad social", "afiliación", "afiliacion", "n.a.s.s"),
+    ),
+    _Recognizer(
+        entity_type="ES_CREDIT_CARD",
+        # 13-19 digits, optionally in groups of 4 with spaces or hyphens.
+        pattern=_re(r"\b(?:\d{4}[\s-]){3}\d{1,4}\b|\b\d{13,19}\b"),
+        score=0.85,
+        validator=validate_luhn,
+        context=("tarjeta", "visa", "mastercard", "crédito", "credito",
+                 "débito", "debito", "amex"),
+    ),
+    _Recognizer(
+        entity_type="ES_PHONE",
+        # Optional +34/0034 prefix, then 6/7/8/9 + 8 digits, grouped freely.
+        pattern=_re(r"(?:(?:\+|00)34[\s.-]?)?\b[6789]\d{2}[\s.-]?\d{3}[\s.-]?\d{3}\b"),
+        score=0.55,
+        validator=None,
+        context=("teléfono", "telefono", "móvil", "movil", "tel", "tfno"),
+    ),
+    _Recognizer(
+        entity_type="ES_POSTAL_CODE",
+        # 5 digits, first two in 01..52 (Spanish province codes).
+        pattern=_re(r"\b(?:0[1-9]|[1-4]\d|5[0-2])\d{3}\b"),
+        score=0.45,
+        validator=None,
+        context=("cp", "código postal", "codigo postal", "c.p."),
+    ),
+    _Recognizer(
+        entity_type="ES_LICENSE_PLATE",
+        # New format NNNN LLL (post-2000, no vowels) or old L(L)-NNNN-LL.
+        pattern=_re(
+            r"\b\d{4}[\s-]?[BCDFGHJKLMNPRSTVWXYZ]{3}\b"
+            r"|\b[A-Z]{1,2}[\s-]?\d{4}[\s-]?[A-Z]{1,2}\b"
+        ),
+        score=0.5,
+        validator=None,
+        context=("matrícula", "matricula", "vehículo", "vehiculo"),
+    ),
+    _Recognizer(
+        entity_type="ES_CADASTRAL_REF",
+        # 20-char alphanumeric reference (structural check only).
+        pattern=_re(r"\b\d{7}[A-Z]{2}\d{4}[A-Z]\d{4}[A-Z]{2}\b"),
+        score=0.9,
+        validator=None,
+        context=("catastro", "catastral", "referencia catastral"),
+    ),
+)
+
+
+_CONTEXT_WINDOW = 60
+_CONTEXT_BOOST = 0.15
+
+
+def _context_boost(text: str, start: int, end: int, ctx: tuple[str, ...]) -> float:
+    if not ctx:
+        return 0.0
+    lo = max(0, start - _CONTEXT_WINDOW)
+    hi = min(len(text), end + _CONTEXT_WINDOW)
+    window = text[lo:hi].lower()
+    return _CONTEXT_BOOST if any(word in window for word in ctx) else 0.0
+
+
+def analyze(text: str) -> list[Recognition]:
+    """Run every recognizer over ``text``; return only structure-validated hits."""
+    if not text:
+        return []
+    hits: list[Recognition] = []
+    for rec in _RECOGNIZERS:
+        for m in rec.pattern.finditer(text):
+            matched = m.group()
+            if rec.validator is not None and not rec.validator(matched):
+                continue
+            score = min(1.0, rec.score + _context_boost(text, m.start(), m.end(), rec.context))
+            hits.append(Recognition(
+                start=m.start(),
+                end=m.end(),
+                entity_type=rec.entity_type,
+                score=score,
+                text=matched,
+            ))
+    return hits

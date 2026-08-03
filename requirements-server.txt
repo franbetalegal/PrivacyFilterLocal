@@ -7,3 +7,21 @@ uvicorn[standard]
 python-multipart
 PyMuPDF
 python-docx
+# OCR fallback for scanned PDFs. Also requires the tesseract binary and the
+# 'spa' traineddata to be installed on the host (brew install tesseract
+# tesseract-lang; apt install tesseract-ocr tesseract-ocr-spa). Both are
+# imported lazily so the app still works without OCR — pages without a text
+# layer are just left blank and reported in the warning.
+pytesseract
+Pillow
+# Iberian NER (adds recall on top of the primarily-English opf model).
+# After installing this you also need the models:
+#     python -m spacy download es_core_news_lg
+#     python -m spacy download ca_core_news_lg   # for Catalan documents
+# spaCy is imported lazily; if a model is missing the app degrades to whatever
+# models are available (Spanish only, Catalan only, or opf + deterministic).
+spacy
+# Language detection so we run only the NER model matching each document's
+# language and avoid tagging Catalan common words as Spanish person names
+# (and vice versa). Very small pure-Python package.
+langdetect

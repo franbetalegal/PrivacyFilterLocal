@@ -7,10 +7,25 @@ a `run.sh`). End users don't clone the repo or run a build step.
 
 ## Features
 
-- Detects 8 types of PII: names, emails, phones, addresses, dates, URLs, account
-  numbers, and secrets
-- Processes text, PDF, and DOCX files; returns redacted PDF/DOCX
-- Runs entirely offline (after the model is downloaded once)
+- **Three-layer detection pipeline** (all local): the OpenAI Privacy Filter
+  transformer + deterministic Spanish/Catalan recognizers with check-digit
+  validation (DNI, NIE, NIF/CIF, IBAN, Seguridad Social, credit card, phone,
+  postal code, plate, cadastral ref) + statistical spaCy NER for names,
+  locations and organisations. See [Spanish & Catalan pipeline](#spanish--catalan-pipeline).
+- **Consistent pseudonymisation**: every mention of the same entity is replaced
+  by the same readable token (`[NOMBRE_1]`, `[DNI_1]`, `[LUGAR_1]`), so the
+  redacted document stays coherent for legal review.
+- Processes text, PDF, and DOCX files; returns redacted PDF/DOCX.
+  - **PDF** redaction maps character offsets back to page rectangles, so PII
+    that wraps across lines is still fully covered.
+  - **DOCX** redaction reaches every container: body, tables, headers/footers,
+    text boxes and comments.
+  - **Scanned PDFs** are OCR'd with Tesseract (`spa`/`cat`/`eng`).
+- **Post-redaction leak check**: the output is re-extracted and any surviving
+  PII string is reported as a warning.
+- **Multi-core**: scanned-PDF OCR is parallelised across CPU cores, always
+  leaving some free for the host (see [Performance & tuning](#performance--tuning)).
+- Runs entirely offline (after the model is downloaded once).
 - **Portable on Windows**: a single folder with an embedded Python — no Python/Node
   install on the target machine, and nothing written outside the folder
 - **Runs on Linux too**: a small tarball + `run.sh` that creates a local virtualenv
@@ -106,7 +121,77 @@ corepack pnpm -C frontend run build
 pip install -r requirements-dev.txt ; python -m pytest tests/
 ```
 
+For the Spanish/Catalan NER and OCR layers you also need the spaCy models and
+the Tesseract binary — see [Spanish & Catalan pipeline](#spanish--catalan-pipeline).
+Tests that need them skip automatically when they're absent.
+
 There is also a CLI from the `opf` package: `opf redact "text"`.
+
+## Spanish & Catalan pipeline
+
+On top of the base `opf` model (documented as *primarily English*), the backend
+adds two local layers tuned for Spanish/Catalan legal documents:
+
+1. **Deterministic recognizers** (`server/recognizers_es.py`) — regex + check
+   digit / checksum validation, so a match is confirmed before it's redacted:
+   DNI, NIE, NIF/CIF, IBAN (mod-97), Seguridad Social (mod-97), credit card
+   (Luhn), phone, postal code, plate, cadastral reference.
+2. **Statistical NER** (`server/ner_es.py`) — spaCy models for person /
+   location / organisation. Multiple language models load in parallel; the text
+   is split into paragraph blocks and each block is routed to the model that
+   matches its detected language, so a Spanish model never tags Catalan common
+   words as names (and vice versa) in a bilingual document. A false-positive
+   filter drops section headings, form labels, public institutions/regions
+   (not personal data), file names and OCR garbage, and trims trailing role
+   words (`Mateo Ruiz Cano Domicilio` → `Mateo Ruiz Cano`).
+
+`server/pipeline.py` merges the three sources (deterministic > opf > NER on
+overlap) and applies the consistent pseudonymisation.
+
+### System dependencies (Linux server / dev machine)
+
+Beyond `pip install -r requirements-server.txt`, install the spaCy models and
+the Tesseract binary + language data:
+
+```bash
+# spaCy Spanish + Catalan models (into the same venv)
+python -m spacy download es_core_news_lg
+python -m spacy download ca_core_news_lg
+
+# Tesseract OCR + Spanish/Catalan traineddata
+sudo apt install tesseract-ocr tesseract-ocr-spa tesseract-ocr-cat   # Debian/Ubuntu
+brew install tesseract tesseract-lang                                # macOS
+```
+
+All of these are imported lazily: if a spaCy model or Tesseract is missing, the
+app keeps working with whatever layers are available (a warning is logged), so
+they're effectively optional but strongly recommended for Spanish/Catalan docs.
+
+### Configuration (environment variables)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PF_NER_MODELS` | `es_core_news_lg,ca_core_news_lg` | spaCy models to load (comma-separated) |
+| `PF_NER_LABELS` | `PER,LOC,ORG` | Entity types to keep from NER |
+| `PF_OCR_LANG` | `spa+eng` | Tesseract languages (use `spa+cat+eng` for bilingual) |
+| `PF_OCR_DPI` | `300` | Rasterisation DPI for scanned pages |
+| `PF_RESERVED_CORES` | `2` | CPU cores always kept free for the host |
+| `PF_MAX_WORKERS` | *(unset)* | Optional hard cap on worker processes/threads |
+
+## Performance & tuning
+
+CPU-bound work respects a shared budget of
+`cpu_count − PF_RESERVED_CORES` (minimum 1), so a job never starves the host:
+
+- **Scanned-PDF OCR** is split into page ranges and run across worker processes
+  (only when a document has ≥3 pages that actually need OCR — text-layer PDFs
+  stay sequential, where that's faster). Measured ~3.4× on a 6-page scanned
+  document on an 8-core machine; the gain scales with core count, so a many-core
+  server benefits more.
+- **Model inference** caps `torch` intra-op threads to the same budget.
+
+On a dedicated server, lower `PF_RESERVED_CORES` (e.g. to `1`) to use more
+cores; on a shared/desktop machine keep the default so the UI stays responsive.
 
 ## Project structure
 
@@ -118,7 +203,14 @@ PrivacyFilterLocal/
 ├── server/                 # FastAPI backend
 │   ├── main.py             # API routes; serves the React build; logging/diagnostics
 │   ├── inference.py        # Model singleton + background download + CPU inference
-│   ├── redaction.py        # Text/PDF/DOCX extraction & redaction
+│   ├── pipeline.py         # Merges opf + deterministic + NER; pseudonymisation
+│   ├── recognizers_es.py   # Spanish/Catalan deterministic recognizers + validators
+│   ├── ner_es.py           # spaCy NER, per-block language routing, FP filter
+│   ├── concurrency.py      # Shared CPU-core budget (PF_RESERVED_CORES)
+│   ├── redaction.py        # Text/PDF/DOCX extraction & redaction entry points
+│   ├── pdf_ops.py          # PDF char→bbox map, offset redaction, parallel OCR
+│   ├── docx_ops.py         # Full-container DOCX traversal (tables/headers/…)
+│   ├── verify.py           # Post-redaction leak verification
 │   └── updates.py          # Model/app update orchestration
 ├── frontend/               # React + Vite UI (src/; dist/ is generated)
 ├── app_update.py           # App version check (GitHub Releases)
