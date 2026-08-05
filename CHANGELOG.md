@@ -5,6 +5,30 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-08-05
+
+### Added
+- **Optional Markdown export of the redacted document.** A new checkbox in the
+  Files tab, *"Convertir también a Markdown (para pegar en una IA)"*, produces
+  a `.md` alongside the redacted PDF/DOCX when ticked. Aimed at the workflow
+  where the user pastes the anonymised document into an LLM for summarisation
+  or drafting: Markdown uses far fewer tokens than a PDF (which the model
+  otherwise rasterises or extracts with layout noise) and preserves the
+  document structure (headings, lists, tables), which measurably improves the
+  model's answers with less context.
+
+  The Markdown is generated from the already-redacted output, never the
+  original, so no sensitive data crosses the converter. For scanned PDFs whose
+  redacted copy is images without a text layer, the pipeline's own
+  already-substituted plain text is served as the `.md` instead — same
+  placeholders, no structural recovery, but the user still gets a token-
+  efficient artefact.
+
+  Under the hood: `markitdown[pdf,docx,pptx,xlsx,xls,outlook]` (selective
+  extras, never `[all]`) with `llm_client=None` and plugin discovery disabled,
+  so no code path in the package can talk to the network.
+  `tests/test_offline_guarantee.py` fails loudly if that ever slips.
+
 ## [2.4.0] - 2026-06-18
 
 ### Added
