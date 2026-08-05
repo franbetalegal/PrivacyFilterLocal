@@ -41,6 +41,8 @@ export default function FilesTab() {
   const [ran, setRan] = useState(false);
   const [modelReady, setModelReady] = useState(true);
   const [mode, setMode] = useState<Mode>("balanced");
+  const [saveExample, setSaveExample] = useState(false);
+  const [captureMsg, setCaptureMsg] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -112,14 +114,26 @@ export default function FilesTab() {
     setError(null);
     setDownloadToken(null);
     setWarning(null);
+    setCaptureMsg(null);
     try {
       const t0 = performance.now();
-      const res = await applyRedaction(file, keptSpans, controller.signal);
+      const res = await applyRedaction(
+        file, keptSpans, controller.signal, saveExample,
+      );
       setElapsed(Math.max(res.elapsed ?? 0, (performance.now() - t0) / 1000));
       setTimings(res.timings ?? null);
       setDownloadToken(res.download_token);
       setDownloadName(res.download_name);
       setWarning(res.warning ?? null);
+      if (saveExample && res.captured) {
+        setCaptureMsg(
+          res.captured.added
+            ? `Guardado para evaluación (${res.captured.total} ejemplo(s) en total).`
+            : res.captured.reason === "duplicate"
+              ? "Este documento ya estaba en el conjunto de evaluación."
+              : "No se pudo guardar el ejemplo.",
+        );
+      }
     } catch (e) {
       if (isAbort(e)) {
         setError(null);
@@ -203,7 +217,7 @@ export default function FilesTab() {
                 onToggleAll={isReviewable ? toggleAll : undefined}
               />
               {isReviewable && (
-                <p>
+                <div className="review-actions">
                   <button
                     className="btn"
                     onClick={onApplySelection}
@@ -212,7 +226,20 @@ export default function FilesTab() {
                   >
                     ↻ Regenerar con mi selección ({keptSpans.length}/{spans.length})
                   </button>
-                </p>
+                  <label
+                    className="save-example"
+                    title="Guarda el texto y tus entidades corregidas como ejemplo para medir la precisión (se queda en tu equipo)."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={saveExample}
+                      disabled={busy}
+                      onChange={(e) => setSaveExample(e.target.checked)}
+                    />
+                    Guardar como ejemplo de evaluación
+                  </label>
+                  {captureMsg && <p className="notice">{captureMsg}</p>}
+                </div>
               )}
             </>
           ) : (

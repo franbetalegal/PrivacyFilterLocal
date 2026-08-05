@@ -62,6 +62,7 @@ export interface ApplyRedactionResult {
   elapsed?: number;
   timings?: StageTimings;
   verified?: boolean;
+  captured?: { added: boolean; total: number; reason?: string } | null;
 }
 
 export interface AppUpdateInfo {
@@ -162,10 +163,12 @@ export async function applyRedaction(
   file: File,
   spans: DetectedSpan[],
   signal?: AbortSignal,
+  saveExample = false,
 ): Promise<ApplyRedactionResult> {
   const form = new FormData();
   form.append("file", file);
   form.append("spans_json", JSON.stringify(spans));
+  form.append("save_example", saveExample ? "true" : "false");
   return jsonOrThrow(
     await fetch("/api/redact-file/apply", {
       method: "POST",
@@ -254,6 +257,72 @@ export async function importDictionary(
 }
 
 export const DICTIONARY_EXPORT_URL = "/api/dictionary/export";
+
+// --- Gold set + evaluation (Phase 7) --------------------------------------
+
+export interface DatasetStats {
+  examples: number;
+  spans: number;
+  by_label: Record<string, number>;
+  path: string;
+}
+
+export interface LabelMetrics {
+  precision: number;
+  recall: number;
+  f1: number;
+  pred: number;
+  gold: number;
+}
+
+export interface OverallMetrics {
+  precision: number;
+  recall: number;
+  f1: number;
+  tp: number;
+  fp: number;
+  fn: number;
+}
+
+export interface EvalReport {
+  examples: number;
+  gold_spans: number;
+  pred_spans: number;
+  mode: Mode;
+  overall: OverallMetrics;
+  exact: OverallMetrics;
+  by_label: Record<string, LabelMetrics>;
+  leaks: { example: number; text: string; label: string }[];
+  leak_count: number;
+  detail?: string;
+}
+
+export async function captureExample(
+  text: string,
+  spans: DetectedSpan[],
+): Promise<{ added: boolean; total: number; reason?: string }> {
+  return jsonOrThrow(
+    await fetch("/api/dataset/capture", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, spans }),
+    }),
+  );
+}
+
+export async function getDatasetStats(): Promise<DatasetStats> {
+  return jsonOrThrow(await fetch("/api/dataset/stats"));
+}
+
+export async function evaluateDataset(mode: Mode): Promise<EvalReport> {
+  return jsonOrThrow(
+    await fetch("/api/dataset/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    }),
+  );
+}
 
 export async function getUpdates(): Promise<UpdatesInfo> {
   return jsonOrThrow(await fetch("/api/updates"));

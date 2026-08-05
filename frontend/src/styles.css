@@ -492,3 +492,58 @@ code {
   padding: 8px 12px;
   color: var(--text);
 }
+
+/* --- Evaluation tab (Phase 7) ----------------------------------------- */
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+  margin-top: 10px;
+}
+.save-example {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.eval-stats {
+  margin: 8px 0 12px;
+}
+.eval-controls {
+  gap: 12px;
+  align-items: center;
+}
+.eval-controls select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 8px;
+}
+.eval-headline {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 6px 0 10px;
+}
+.metric {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 18px;
+  background: var(--panel-2);
+  min-width: 120px;
+  text-align: center;
+}
+.metric-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+.metric-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 2px;
+}

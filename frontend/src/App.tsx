@@ -3,16 +3,18 @@ import { getVersion, getHealth, shutdown, DIAGNOSTICS_URL, type Health } from ".
 import TextTab from "./tabs/TextTab";
 import FilesTab from "./tabs/FilesTab";
 import DictionaryTab from "./tabs/DictionaryTab";
+import EvaluationTab from "./tabs/EvaluationTab";
 import InfoTab from "./tabs/InfoTab";
 import UpdateBanner from "./components/UpdateBanner";
 import PreparingScreen from "./components/PreparingScreen";
 
-type TabKey = "text" | "files" | "dictionary" | "info";
+type TabKey = "text" | "files" | "dictionary" | "evaluation" | "info";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "text", label: "Text" },
   { key: "files", label: "Files" },
   { key: "dictionary", label: "Diccionario" },
+  { key: "evaluation", label: "Evaluación" },
   { key: "info", label: "Info" },
 ];
 
@@ -126,6 +128,7 @@ export default function App() {
         {tab === "text" && <TextTab />}
         {tab === "files" && <FilesTab />}
         {tab === "dictionary" && <DictionaryTab />}
+        {tab === "evaluation" && <EvaluationTab />}
         {tab === "info" && <InfoTab />}
       </main>
     </div>

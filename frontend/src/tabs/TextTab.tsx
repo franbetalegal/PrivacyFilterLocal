@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   redactText,
+  captureExample,
   getHealth,
   isAbort,
   type DetectedSpan,
@@ -29,6 +30,7 @@ export default function TextTab() {
   const [ran, setRan] = useState(false);
   const [modelReady, setModelReady] = useState(true);
   const [mode, setMode] = useState<Mode>("balanced");
+  const [captureMsg, setCaptureMsg] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -50,6 +52,7 @@ export default function TextTab() {
     abortRef.current = controller;
     setLoading(true);
     setError(null);
+    setCaptureMsg(null);
     try {
       const res = await redactText(text, mode, controller.signal);
       setRedacted(res.redacted_text);
@@ -66,6 +69,21 @@ export default function TextTab() {
     } finally {
       setLoading(false);
       abortRef.current = null;
+    }
+  }
+
+  async function onSaveExample() {
+    try {
+      const res = await captureExample(text, spans);
+      setCaptureMsg(
+        res.added
+          ? `Guardado para evaluación (${res.total} ejemplo(s) en total).`
+          : res.reason === "duplicate"
+            ? "Este texto ya estaba en el conjunto de evaluación."
+            : "No se pudo guardar el ejemplo.",
+      );
+    } catch (e) {
+      setCaptureMsg(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -127,6 +145,16 @@ export default function TextTab() {
                 {elapsed != null ? ` (${elapsed.toFixed(1)}s)` : ""}
               </p>
               <SpanList spans={spans} />
+              <p>
+                <button
+                  className="btn"
+                  onClick={onSaveExample}
+                  title="Guarda este texto y sus entidades como ejemplo para medir la precisión (se queda en tu equipo)."
+                >
+                  Guardar como ejemplo de evaluación
+                </button>
+              </p>
+              {captureMsg && <p className="notice">{captureMsg}</p>}
             </>
           ) : (
             <p className="muted">

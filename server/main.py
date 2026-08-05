@@ -164,6 +164,17 @@ class DictImportIn(BaseModel):
     terms: list[dict]
 
 
+class CaptureIn(BaseModel):
+    """One reviewed example to append to the local gold set (Phase 7)."""
+    text: str
+    spans: list[dict]
+
+
+class EvaluateIn(BaseModel):
+    """Request to score the whole gold set in a given operating mode."""
+    mode: str = "balanced"
+
+
 # Accepted upload extensions (mirrors the old Gradio file_types list).
 TEXT_EXTS = {".txt", ".md", ".csv", ".json", ".log", ".py", ".js", ".xml", ".html"}
 DOC_EXTS = {".pdf", ".docx"}
@@ -413,6 +424,7 @@ async def api_redact_file_apply(
     request: Request,
     file: UploadFile = File(...),
     spans_json: str = Form(...),
+    save_example: str = Form("false"),
 ) -> dict:
     """Re-apply a user-curated span list to a re-uploaded document.
 
@@ -474,6 +486,30 @@ async def api_redact_file_apply(
                 f"Se detectaron {len(leaked)} fragmento(s) de PII que no pudieron "
                 "eliminarse. Revise el resultado antes de compartirlo."
             )
+
+        # Optionally keep the reviewer's curated spans as a gold-set example
+        # (Phase 7). We re-extract the plain text so the stored offsets match
+        # what detection saw; extraction is deterministic, so the client's
+        # offsets line up with this text.
+        captured = None
+        if str(save_example).lower() in ("1", "true", "yes") and spans:
+            try:
+                if ext == ".pdf":
+                    text = await inference.run_blocking(
+                        redaction.extract_text_from_pdf, in_path)
+                else:
+                    text = await inference.run_blocking(
+                        redaction.extract_text_from_docx, in_path)
+                if text:
+                    from server import dataset
+                    gold_spans = [
+                        {"start": s.start, "end": s.end, "label": s.label}
+                        for s in spans
+                    ]
+                    captured = dataset.get_store().append_example(text, gold_spans)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not capture gold example: %s", exc)
+
         return {
             "download_token": download_token,
             "download_name": download_name,
@@ -481,6 +517,7 @@ async def api_redact_file_apply(
             "leaked_pii_count": len(leaked),
             "warning": warning,
             "elapsed": round(time.time() - t_total_start, 3),
+            "captured": captured,
         }
     finally:
         from server import pdf_ops
@@ -584,6 +621,53 @@ def api_dictionary_export() -> Response:
             "Content-Disposition": "attachment; filename=diccionario-anonimizador.json"
         },
     )
+
+
+# --------------------------------------------------------------------------
+#  API: gold set + evaluation (Phase 7 — measure detection quality)
+# --------------------------------------------------------------------------
+@app.post("/api/dataset/capture")
+def api_dataset_capture(payload: CaptureIn) -> dict:
+    """Append one reviewed example to the local gold set.
+
+    Called from the human-in-the-loop review flow when the user opts to keep a
+    curated result as an evaluation example. The spans are the reviewer's final,
+    corrected list — the ground truth we score against later. Stored locally and
+    git-ignored (it contains real PII).
+    """
+    from server import dataset
+
+    return dataset.get_store().append_example(payload.text, payload.spans)
+
+
+@app.get("/api/dataset/stats")
+def api_dataset_stats() -> dict:
+    """How many examples/spans the gold set holds, broken down by label."""
+    from server import dataset
+
+    return dataset.get_store().stats()
+
+
+@app.post("/api/dataset/evaluate")
+async def api_dataset_evaluate(payload: EvaluateIn) -> dict:
+    """Score the whole gold set through the real pipeline in ``mode``.
+
+    Runs detection on every stored example and reports precision/recall/F1
+    (overall and per label) plus any leaks — gold PII strings that survived
+    redaction. This is the objective "is it getting more precise?" answer.
+    """
+    from server import dataset, evaluation
+
+    examples = dataset.get_store().load_examples()
+    if not examples:
+        return {"examples": 0, "detail": "El gold set está vacío."}
+    # Detection must go through the model, which is async and serialized on the
+    # inference pool; gather results first, then score synchronously.
+    results = []
+    for ex in examples:
+        results.append(await inference.redact(ex.text, mode=payload.mode))
+    report = evaluation.score_examples(examples, results, mode=payload.mode)
+    return report.as_dict()
 
 
 # --------------------------------------------------------------------------
