@@ -45,6 +45,11 @@ export interface RedactFileResult {
   elapsed: number;
   download_token: string | null;
   download_name: string | null;
+  /** Optional .md rendering of the redacted output, present only when the
+   *  caller passed ``alsoMarkdown``. Meant for pasting into an LLM: fewer
+   *  tokens than a PDF and explicit structure (headings, lists, tables). */
+  markdown_token?: string | null;
+  markdown_name?: string | null;
   mode?: Mode;
   leaked_pii_count?: number;
   timings?: StageTimings;
@@ -56,6 +61,8 @@ export interface RedactFileResult {
 export interface ApplyRedactionResult {
   download_token: string | null;
   download_name: string | null;
+  markdown_token?: string | null;
+  markdown_name?: string | null;
   applied_span_count: number;
   leaked_pii_count: number;
   warning?: string | null;
@@ -146,10 +153,12 @@ export async function redactFile(
   file: File,
   mode: Mode = "balanced",
   signal?: AbortSignal,
+  alsoMarkdown = false,
 ): Promise<RedactFileResult> {
   const form = new FormData();
   form.append("file", file);
   form.append("mode", mode);
+  if (alsoMarkdown) form.append("also_markdown", "true");
   return jsonOrThrow(
     await fetch("/api/redact-file", { method: "POST", body: form, signal }),
   );
@@ -164,11 +173,13 @@ export async function applyRedaction(
   spans: DetectedSpan[],
   signal?: AbortSignal,
   saveExample = false,
+  alsoMarkdown = false,
 ): Promise<ApplyRedactionResult> {
   const form = new FormData();
   form.append("file", file);
   form.append("spans_json", JSON.stringify(spans));
   form.append("save_example", saveExample ? "true" : "false");
+  if (alsoMarkdown) form.append("also_markdown", "true");
   return jsonOrThrow(
     await fetch("/api/redact-file/apply", {
       method: "POST",

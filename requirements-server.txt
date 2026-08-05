@@ -25,3 +25,15 @@ spacy
 # language and avoid tagging Catalan common words as Spanish person names
 # (and vice versa). Very small pure-Python package.
 langdetect
+# Optional post-processing: convert the *already-redacted* PDF/DOCX/etc. to
+# Markdown so the user can paste it into an LLM to summarise or draft with
+# fewer tokens and preserved structure.
+#
+# IMPORTANT: SELECTIVE extras only, NEVER markitdown[all]. Leaving out
+# `audio-transcription` (which calls SpeechRecognition.recognize_google and
+# uploads audio to Google), `youtube-transcription`, and the Azure clients
+# means those network paths are not merely disabled — they are absent from
+# the package. tests/test_offline_guarantee.py fails if this ever slips.
+# Also `llm_client=None` is set at construction, so images cannot be sent to
+# an external model for captioning.
+markitdown[pdf,docx,pptx,xlsx,xls,outlook]

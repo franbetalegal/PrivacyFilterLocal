@@ -34,6 +34,11 @@ export default function FilesTab() {
   const [timings, setTimings] = useState<StageTimings | null>(null);
   const [downloadToken, setDownloadToken] = useState<string | null>(null);
   const [downloadName, setDownloadName] = useState<string | null>(null);
+  // Optional secondary output: the redacted document rendered as Markdown, for
+  // pasting into an LLM with fewer tokens and preserved structure.
+  const [markdownToken, setMarkdownToken] = useState<string | null>(null);
+  const [markdownName, setMarkdownName] = useState<string | null>(null);
+  const [alsoMarkdown, setAlsoMarkdown] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -82,7 +87,7 @@ export default function FilesTab() {
     setWarning(null);
     try {
       const t0 = performance.now();
-      const res = await redactFile(file, mode, controller.signal);
+      const res = await redactFile(file, mode, controller.signal, alsoMarkdown);
       setSpans(res.detected_spans);
       setSelection(res.detected_spans.map(() => true));
       // Guard against the server omitting a stage: the wall time the user
@@ -91,6 +96,8 @@ export default function FilesTab() {
       setTimings(res.timings ?? null);
       setDownloadToken(res.download_token);
       setDownloadName(res.download_name);
+      setMarkdownToken(res.markdown_token ?? null);
+      setMarkdownName(res.markdown_name ?? null);
       setWarning(res.warning ?? null);
       setRan(true);
       setModelReady(true);
@@ -118,12 +125,14 @@ export default function FilesTab() {
     try {
       const t0 = performance.now();
       const res = await applyRedaction(
-        file, keptSpans, controller.signal, saveExample,
+        file, keptSpans, controller.signal, saveExample, alsoMarkdown,
       );
       setElapsed(Math.max(res.elapsed ?? 0, (performance.now() - t0) / 1000));
       setTimings(res.timings ?? null);
       setDownloadToken(res.download_token);
       setDownloadName(res.download_name);
+      setMarkdownToken(res.markdown_token ?? null);
+      setMarkdownName(res.markdown_name ?? null);
       setWarning(res.warning ?? null);
       if (saveExample && res.captured) {
         setCaptureMsg(
@@ -165,6 +174,7 @@ export default function FilesTab() {
           setSpans([]);
           setSelection([]);
           setDownloadToken(null);
+          setMarkdownToken(null);
           setWarning(null);
           setElapsed(null);
           setTimings(null);
@@ -172,6 +182,19 @@ export default function FilesTab() {
       />
 
       <ModeSelector value={mode} onChange={setMode} disabled={busy} />
+
+      <label
+        className="save-example"
+        title="Convierte el documento anonimizado a Markdown para poder pegarlo en una IA con menos tokens y con la estructura (títulos, listas y tablas) preservada."
+      >
+        <input
+          type="checkbox"
+          checked={alsoMarkdown}
+          disabled={busy}
+          onChange={(e) => setAlsoMarkdown(e.target.checked)}
+        />
+        Convertir también a Markdown (para pegar en una IA)
+      </label>
 
       <div className="row">
         <button className="btn primary" onClick={onProcess} disabled={busy}>
@@ -246,7 +269,7 @@ export default function FilesTab() {
             <p className="muted">No PII entities detected.</p>
           )}
           {downloadToken && (
-            <p>
+            <p className="row">
               <a
                 className="btn"
                 href={downloadUrl(downloadToken)}
@@ -254,6 +277,16 @@ export default function FilesTab() {
               >
                 ⬇ Download {downloadName ?? "redacted file"}
               </a>
+              {markdownToken && (
+                <a
+                  className="btn"
+                  href={downloadUrl(markdownToken)}
+                  download={markdownName ?? undefined}
+                  title="Documento anonimizado como Markdown, listo para pegar en una IA."
+                >
+                  ⬇ Descargar .md {markdownName ? `(${markdownName})` : ""}
+                </a>
+              )}
             </p>
           )}
         </div>

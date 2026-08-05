@@ -225,6 +225,92 @@ def _safe_unlink(path: str | None) -> None:
             logger.debug("Could not delete temp file %s: %s", path, exc)
 
 
+def _bool_form(value: object) -> bool:
+    """Interpret a multipart form field as a boolean.
+
+    FastAPI's ``Form(...)`` gives us strings, and the frontend may send
+    ``"true"``, ``"1"``, ``"on"`` or ``"yes"`` depending on the widget used.
+    Same idea as :func:`str.lower` == "true", but tolerant.
+    """
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _register_markdown_export(
+    source_path: str,
+    ext: str,
+    *,
+    original_filename: str,
+    fallback_text: str | None,
+) -> tuple[str | None, str | None]:
+    """Produce the ``.md`` for the redacted output and expose it for download.
+
+    Returns ``(token, name)`` on success or ``(None, None)`` if the conversion
+    yielded no text (an unsupported format with no fallback, or an internal
+    failure). Never raises: this is opt-in and secondary to the primary output,
+    which is already downloadable at this point.
+    """
+    from server import markdown_export
+
+    try:
+        markdown = markdown_export.to_markdown(
+            source_path, ext, fallback_text=fallback_text,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Markdown export failed for %s: %s", original_filename, exc)
+        return None, None
+
+    if not markdown.strip():
+        return None, None
+
+    stem = Path(original_filename).stem or "documento"
+    md_name = f"{stem}_ANONIMIZED.md"
+    fd, md_path = tempfile.mkstemp(suffix=".md", prefix="markdown_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(markdown)
+    except OSError as exc:
+        logger.warning("Could not write .md file %s: %s", md_path, exc)
+        _safe_unlink(md_path)
+        return None, None
+
+    return _register_download(md_path, md_name), md_name
+
+
+async def _fallback_redacted_text(
+    in_path: str, ext: str, spans
+) -> str | None:
+    """Rebuild the redacted plain text for the scanned-PDF fallback in ``apply``.
+
+    ``/api/redact-file`` has the pipeline's own ``RedactionResult.redacted_text``
+    right there; ``/api/redact-file/apply`` doesn't (the pipeline never ran, the
+    caller supplied the spans), so we re-extract the plain text and substitute
+    each span. Extraction is cached by content, so this is a hit against the
+    same request's earlier extraction whenever the user only tweaked spans.
+    """
+    if ext not in DOC_EXTS or not spans:
+        return None
+    try:
+        if ext == ".pdf":
+            text = await inference.run_blocking(
+                redaction.extract_text_from_pdf, in_path
+            )
+        else:
+            text = await inference.run_blocking(
+                redaction.extract_text_from_docx, in_path
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not re-extract text for markdown fallback: %s", exc)
+        return None
+    if not text:
+        return None
+    # Substitute in reverse offset order so earlier substitutions don't shift
+    # the offsets of later spans.
+    result = text
+    for span in sorted(spans, key=lambda s: s.start, reverse=True):
+        result = result[: span.start] + span.placeholder + result[span.end :]
+    return result
+
+
 # --------------------------------------------------------------------------
 #  API: core
 # --------------------------------------------------------------------------
@@ -263,12 +349,21 @@ async def api_redact_file(
     request: Request,
     file: UploadFile = File(...),
     mode: str = "balanced",
+    also_markdown: str = Form("false"),
 ) -> dict:
     """Detect PII in an uploaded file.
 
     For PDF/DOCX a redacted copy is produced and exposed via a one-time
     ``download_token``. The uploaded input is always deleted after processing.
     If the client cancels (disconnects), the redaction step is skipped.
+
+    When ``also_markdown`` is truthy, the *redacted* file is additionally
+    converted to Markdown (for pasting into an LLM: fewer tokens than a PDF
+    and explicit structure). A second one-time ``markdown_download_token`` is
+    included in the response. The Markdown never sees the original document;
+    it is produced from the redacted copy (and, for scanned PDFs whose
+    redacted copy is images, from the already-substituted text the pipeline
+    used).
     """
     t_total_start = time.time()
     ext = Path(file.filename or "").suffix.lower()
@@ -321,6 +416,8 @@ async def api_redact_file(
 
         download_token = None
         download_name = None
+        markdown_token = None
+        markdown_name = None
         leaked: list[str] = []
         # Zero-initialised so the timings dict is well-formed when this block
         # is skipped (plain-text upload, or a document with no detections).
@@ -368,6 +465,18 @@ async def api_redact_file(
             download_name = f"{Path(file.filename).stem}_ANONIMIZED{ext}"
             download_token = _register_download(out_path, download_name)
 
+            # Optional: hand the redacted output to markitdown so the user can
+            # paste it into an LLM. The redacted text (with placeholders
+            # already applied) doubles as the fallback for scanned PDFs whose
+            # redacted copy has no text layer for markitdown to read.
+            if _bool_form(also_markdown):
+                markdown_token, markdown_name = _register_markdown_export(
+                    out_path,
+                    ext,
+                    original_filename=Path(file.filename).name,
+                    fallback_text=result.redacted_text,
+                )
+
         payload = result.to_dict()
         warning = payload.get("warning")
         if leaked:
@@ -409,6 +518,8 @@ async def api_redact_file(
             "verified": verified,
             "download_token": download_token,
             "download_name": download_name,
+            "markdown_token": markdown_token,
+            "markdown_name": markdown_name,
             "mode": mode,
         }
     finally:
@@ -425,6 +536,7 @@ async def api_redact_file_apply(
     file: UploadFile = File(...),
     spans_json: str = Form(...),
     save_example: str = Form("false"),
+    also_markdown: str = Form("false"),
 ) -> dict:
     """Re-apply a user-curated span list to a re-uploaded document.
 
@@ -480,6 +592,21 @@ async def api_redact_file_apply(
         )
         download_name = f"{Path(file.filename).stem}_ANONIMIZED{ext}"
         download_token = _register_download(out_path, download_name)
+
+        # Optional Markdown output — same feature as /api/redact-file. The
+        # fallback text for scanned PDFs is derived by re-applying the caller's
+        # spans to the freshly re-extracted plain text.
+        markdown_token = None
+        markdown_name = None
+        if _bool_form(also_markdown):
+            fallback = await _fallback_redacted_text(in_path, ext, spans)
+            markdown_token, markdown_name = _register_markdown_export(
+                out_path,
+                ext,
+                original_filename=Path(file.filename).name,
+                fallback_text=fallback,
+            )
+
         warning = None
         if leaked:
             warning = (
@@ -513,6 +640,8 @@ async def api_redact_file_apply(
         return {
             "download_token": download_token,
             "download_name": download_name,
+            "markdown_token": markdown_token,
+            "markdown_name": markdown_name,
             "applied_span_count": len(spans),
             "leaked_pii_count": len(leaked),
             "warning": warning,
