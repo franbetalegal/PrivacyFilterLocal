@@ -210,3 +210,38 @@ def test_analyze_positions_are_original_offsets():
     text = "  12345678Z  "
     hit = next(h for h in analyze(text) if h.entity_type == "ES_DNI")
     assert text[hit.start:hit.end] == "12345678Z"
+
+
+# --- Registry / cadastral identifiers -------------------------------------
+
+@pytest.mark.parametrize("ref", [
+    "Tomo 4097", "Libro 916", "Folio 64", "Hoja 286", "Inscripción 4",
+    "Finca Registral 817", "Sección 1", "Foli 12", "Llibre 5",
+])
+def test_registry_references_detected(ref):
+    """Registry locators must be caught by the *deterministic* layer.
+
+    They deliberately bypass the NER false-positive filter: "tomo"/"libro"/
+    "folio"/"hoja" are in the boilerplate lexicon (they're noise as bare
+    words), so only a validated match keeps them.
+    """
+    text = f"Consta en el {ref} del Registro de la Propiedad."
+    hits = [h for h in analyze(text) if h.entity_type == "ES_REGISTRY_REF"]
+    assert hits, f"{ref!r} not detected"
+    assert hits[0].text == ref
+
+
+@pytest.mark.parametrize("ref", [
+    "9464302DF2996S0004RR", "9019304EE0191N0001HE", "4256807DF2945E0001GD",
+])
+def test_cadastral_references_detected(ref):
+    hits = [h for h in analyze(f"Referencia catastral {ref}.")
+            if h.entity_type == "ES_CADASTRAL_REF"]
+    assert hits and hits[0].text == ref
+
+
+def test_registry_reference_needs_a_number():
+    """A bare 'Tomo' with no number is noise, not an identifier."""
+    hits = [h for h in analyze("El tomo consta archivado.")
+            if h.entity_type == "ES_REGISTRY_REF"]
+    assert hits == []

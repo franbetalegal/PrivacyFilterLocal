@@ -6,14 +6,17 @@ Run with:  uvicorn server.main:app --host 0.0.0.0 --port 7860
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import shutil
 import sys
 import tempfile
 import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -21,12 +24,38 @@ from pathlib import Path
 from server import PROJECT_DIR
 from server import inference, redaction
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
+
+
+@dataclass(frozen=True)
+class _SpanFromClient:
+    """User-curated span sent to the /api/redact-file/apply endpoint.
+
+    Deliberately duck-typed to :class:`opf._core.runtime.DetectedSpan` so it
+    plugs into :func:`server.redaction.redact_pdf`/``redact_docx`` and
+    :func:`server.verify.find_leaks` without adapters.
+    """
+    start: int
+    end: int
+    text: str
+    placeholder: str
+    label: str = ""
+
+
+def _copy_to_temp(input_path: str, ext: str) -> str:
+    """Copy ``input_path`` to a new temp file and return the new path.
+
+    Used by the apply endpoint when the caller sends an empty span list — the
+    file still needs a token-served copy so the download flow works.
+    """
+    out = redaction.temp_output_path(input_path, ext)
+    shutil.copyfile(input_path, out)
+    return out
 
 logging.basicConfig(
     level=logging.INFO,
@@ -108,6 +137,31 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 # --------------------------------------------------------------------------
 class RedactRequest(BaseModel):
     text: str
+    # Precision/recall operating point. Unknown values fall back to "balanced"
+    # in :func:`server.inference.redact` — no explicit validator here so the
+    # API stays forward-compatible with future presets.
+    mode: str = "balanced"
+
+
+class DictEntryIn(BaseModel):
+    """A dictionary term submitted from the UI (add or update)."""
+    term: str
+    label: str = "OTRO"
+    match: str = "smart"
+    enabled: bool = True
+
+
+class DictEntryPatch(BaseModel):
+    """Partial update — only the provided fields change."""
+    term: str | None = None
+    label: str | None = None
+    match: str | None = None
+    enabled: bool | None = None
+
+
+class DictImportIn(BaseModel):
+    """A dictionary export to smart-merge into the local one."""
+    terms: list[dict]
 
 
 # Accepted upload extensions (mirrors the old Gradio file_types list).
@@ -183,23 +237,29 @@ async def api_redact(req: RedactRequest) -> dict:
     text = req.text or ""
     if not text.strip():
         return {"redacted_text": "", "detected_spans": [], "elapsed": 0.0,
-                "empty": True}
+                "empty": True, "mode": req.mode}
     start = time.time()
-    result = await inference.redact(text)
+    result = await inference.redact(text, mode=req.mode)
     elapsed = time.time() - start
     payload = result.to_dict()
     payload["elapsed"] = round(elapsed, 3)
+    payload["mode"] = req.mode
     return payload
 
 
 @app.post("/api/redact-file")
-async def api_redact_file(request: Request, file: UploadFile = File(...)) -> dict:
+async def api_redact_file(
+    request: Request,
+    file: UploadFile = File(...),
+    mode: str = "balanced",
+) -> dict:
     """Detect PII in an uploaded file.
 
     For PDF/DOCX a redacted copy is produced and exposed via a one-time
     ``download_token``. The uploaded input is always deleted after processing.
     If the client cancels (disconnects), the redaction step is skipped.
     """
+    t_total_start = time.time()
     ext = Path(file.filename or "").suffix.lower()
     if ext not in TEXT_EXTS and ext not in DOC_EXTS:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
@@ -210,21 +270,37 @@ async def api_redact_file(request: Request, file: UploadFile = File(...)) -> dic
         with os.fdopen(fd, "wb") as fh:
             fh.write(await file.read())
 
+        t_extract_start = time.time()
+        # Offload to the inference pool: extraction is CPU-bound and on a
+        # scanned file runs for minutes, which would otherwise block the
+        # asyncio loop — stalling /api/health polling and the cancellation
+        # check below.
         if ext == ".pdf":
-            text = redaction.extract_text_from_pdf(in_path)
+            text = await inference.run_blocking(
+                redaction.extract_text_from_pdf, in_path)
             if text is None:
                 raise HTTPException(status_code=422, detail="Could not read PDF.")
         elif ext == ".docx":
-            text = redaction.extract_text_from_docx(in_path)
+            text = await inference.run_blocking(
+                redaction.extract_text_from_docx, in_path)
             if text is None:
                 raise HTTPException(status_code=422, detail="Could not read DOCX.")
         else:
             text = Path(in_path).read_text(encoding="utf-8", errors="replace")
+        t_extract = time.time() - t_extract_start
+        logger.info(
+            "TIMING extract=%.2fs (%d chars) file=%s",
+            t_extract, len(text), Path(file.filename).name,
+        )
 
         start = time.time()
-        result = await inference.redact(text)
-        elapsed = time.time() - start
+        result = await inference.redact(text, mode=mode)
+        t_detect = time.time() - start
         spans = result.detected_spans
+        logger.info(
+            "TIMING inference+pipeline=%.2fs spans=%d",
+            t_detect, len(spans),
+        )
 
         # If the user cancelled while we were detecting, skip the (possibly slow)
         # redaction step and don't create a download.
@@ -235,7 +311,13 @@ async def api_redact_file(request: Request, file: UploadFile = File(...)) -> dic
         download_token = None
         download_name = None
         leaked: list[str] = []
+        # Zero-initialised so the timings dict is well-formed when this block
+        # is skipped (plain-text upload, or a document with no detections).
+        t_redact = 0.0
+        t_verify = 0.0
+        verified = False
         if spans and ext in DOC_EXTS:
+            t_redact_start = time.time()
             if ext == ".pdf":
                 out_path = await inference.run_blocking(
                     redaction.redact_pdf, in_path, spans
@@ -244,11 +326,27 @@ async def api_redact_file(request: Request, file: UploadFile = File(...)) -> dic
                 out_path = await inference.run_blocking(
                     redaction.redact_docx, in_path, spans
                 )
+            t_redact = time.time() - t_redact_start
+            logger.info("TIMING redact=%.2fs", t_redact)
             # Post-redaction: verify no original PII survived in the output.
             from server import verify
-            leaked = await inference.run_blocking(
-                verify.find_leaks, out_path, ext, spans
+            t_verify_start = time.time()
+            verified = await inference.run_blocking(
+                verify.can_verify, out_path, ext
             )
+            if verified:
+                leaked = await inference.run_blocking(
+                    verify.find_leaks, out_path, ext, spans
+                )
+            else:
+                logger.warning(
+                    "Leak verification is blind on %s: the redacted output has "
+                    "no text layer (scanned source), so surviving PII inside "
+                    "the page image cannot be detected.",
+                    Path(file.filename).name,
+                )
+            t_verify = time.time() - t_verify_start
+            logger.info("TIMING verify=%.2fs verified=%s", t_verify, verified)
             if leaked:
                 logger.warning(
                     "Redaction verification: %d PII string(s) leaked in %s: %r",
@@ -267,16 +365,126 @@ async def api_redact_file(request: Request, file: UploadFile = File(...)) -> dic
                 "eliminarse del documento anonimizado. Revise el resultado antes de compartirlo."
             )
             warning = f"{warning}\n{leak_msg}" if warning else leak_msg
+        elif download_token and not verified:
+            # Never let an empty leak list read as "verified clean" when the
+            # check could not see the page content at all.
+            blind_msg = (
+                "No se pudo verificar el documento anonimizado: procede de un "
+                "escaneado y la copia resultante no tiene capa de texto, así que "
+                "no es posible comprobar automáticamente si algún dato sobrevive "
+                "dentro de la imagen. Revíselo manualmente antes de compartirlo."
+            )
+            warning = f"{warning}\n{blind_msg}" if warning else blind_msg
+        total = time.time() - t_total_start
+        logger.info(
+            "TIMING total=%.2fs (extract=%.2f detect=%.2f redact=%.2f verify=%.2f)",
+            total, t_extract, t_detect, t_redact, t_verify,
+        )
         return {
             "detected_spans": payload["detected_spans"],
             "summary": payload["summary"],
             "warning": warning,
             "leaked_pii_count": len(leaked),
-            "elapsed": round(elapsed, 3),
+            # True end-to-end wall time. Previously this only covered detection,
+            # which on a scanned file hid more than half the wait.
+            "elapsed": round(total, 3),
+            "timings": {
+                "extract": round(t_extract, 3),
+                "detect": round(t_detect, 3),
+                "redact": round(t_redact, 3),
+                "verify": round(t_verify, 3),
+                "total": round(total, 3),
+            },
+            "verified": verified,
             "download_token": download_token,
             "download_name": download_name,
+            "mode": mode,
         }
     finally:
+        # Drop the per-request extraction cache so PII text doesn't linger
+        # in the process address space longer than needed.
+        from server import pdf_ops
+        pdf_ops.clear_extract_cache()
+        _safe_unlink(in_path)
+
+
+@app.post("/api/redact-file/apply")
+async def api_redact_file_apply(
+    request: Request,
+    file: UploadFile = File(...),
+    spans_json: str = Form(...),
+) -> dict:
+    """Re-apply a user-curated span list to a re-uploaded document.
+
+    The frontend uses this after a human-in-the-loop review pass on
+    ``/api/redact-file`` results: the user un-checks, deletes, edits or adds
+    spans in the UI, then hits this endpoint with the same file and the final
+    span list. The pipeline is NOT run again — we produce the redacted
+    document directly from the caller-supplied spans, so their review is the
+    single source of truth.
+
+    ``spans_json`` is a JSON array whose entries mirror ``DetectedSpan``:
+    ``{"start": int, "end": int, "text": str, "placeholder": str,
+    "label": str}``. Only ``text`` and ``placeholder`` are used by the DOCX
+    path; the PDF path also needs ``start``/``end`` for offset-based redaction.
+    """
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in DOC_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Apply endpoint only supports PDF/DOCX (got {ext}).",
+        )
+    try:
+        raw_spans = json.loads(spans_json)
+        if not isinstance(raw_spans, list):
+            raise ValueError("spans_json must be a JSON array")
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid spans_json: {exc}")
+
+    spans = [_SpanFromClient(**s) for s in raw_spans]
+
+    t_total_start = time.time()
+    fd, in_path = tempfile.mkstemp(suffix=ext, prefix="apply_")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(await file.read())
+        if await request.is_disconnected():
+            return {"cancelled": True}
+        if not spans:
+            # Nothing to redact — return the input as-is under a new token so
+            # the caller still gets a downloadable copy.
+            out_path = _copy_to_temp(in_path, ext)
+        elif ext == ".pdf":
+            out_path = await inference.run_blocking(
+                redaction.redact_pdf, in_path, spans
+            )
+        else:
+            out_path = await inference.run_blocking(
+                redaction.redact_docx, in_path, spans
+            )
+        from server import verify
+        leaked = await inference.run_blocking(
+            verify.find_leaks, out_path, ext, spans
+        )
+        download_name = f"{Path(file.filename).stem}_ANONIMIZED{ext}"
+        download_token = _register_download(out_path, download_name)
+        warning = None
+        if leaked:
+            warning = (
+                f"Se detectaron {len(leaked)} fragmento(s) de PII que no pudieron "
+                "eliminarse. Revise el resultado antes de compartirlo."
+            )
+        return {
+            "download_token": download_token,
+            "download_name": download_name,
+            "applied_span_count": len(spans),
+            "leaked_pii_count": len(leaked),
+            "warning": warning,
+            "elapsed": round(time.time() - t_total_start, 3),
+        }
+    finally:
+        from server import pdf_ops
+        pdf_ops.clear_extract_cache()
         _safe_unlink(in_path)
 
 
@@ -291,6 +499,90 @@ def api_download(token: str) -> FileResponse:
         path,
         filename=download_name,
         background=BackgroundTask(_safe_unlink, path),
+    )
+
+
+# --------------------------------------------------------------------------
+#  API: custom dictionary (user-editable terms to always anonymize)
+# --------------------------------------------------------------------------
+@app.get("/api/dictionary")
+def api_dictionary_list() -> dict:
+    """Return the current dictionary plus the canonical label suggestions."""
+    from server import custom_dict
+
+    return {
+        "terms": custom_dict.get_store().export_terms(),
+        "labels": list(custom_dict.CANONICAL_LABELS),
+        "match_modes": list(custom_dict.MATCH_MODES),
+    }
+
+
+@app.post("/api/dictionary")
+def api_dictionary_add(entry: DictEntryIn) -> dict:
+    """Add one term (or update label/enabled if the same target exists)."""
+    from server import custom_dict
+
+    err = custom_dict.validate_entry(entry.term, entry.match)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    saved = custom_dict.get_store().add(
+        term=entry.term, label=entry.label, match=entry.match,
+        enabled=entry.enabled,
+    )
+    return saved.to_dict()
+
+
+@app.put("/api/dictionary/{entry_id}")
+def api_dictionary_update(entry_id: str, patch: DictEntryPatch) -> dict:
+    """Update fields of an existing term."""
+    from server import custom_dict
+
+    fields = {k: v for k, v in patch.model_dump().items() if v is not None}
+    if "term" in fields or "match" in fields:
+        term = fields.get("term", "")
+        match = fields.get("match", "smart")
+        err = custom_dict.validate_entry(term or "x", match)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+    updated = custom_dict.get_store().update(entry_id, **fields)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Término no encontrado.")
+    return updated.to_dict()
+
+
+@app.delete("/api/dictionary/{entry_id}")
+def api_dictionary_delete(entry_id: str) -> dict:
+    """Remove a term from the dictionary."""
+    from server import custom_dict
+
+    if not custom_dict.get_store().remove(entry_id):
+        raise HTTPException(status_code=404, detail="Término no encontrado.")
+    return {"removed": entry_id}
+
+
+@app.post("/api/dictionary/import")
+def api_dictionary_import(payload: DictImportIn) -> dict:
+    """Smart-merge an imported dictionary (union, keep local on conflict)."""
+    from server import custom_dict
+
+    return custom_dict.get_store().import_terms(payload.terms)
+
+
+@app.get("/api/dictionary/export")
+def api_dictionary_export() -> Response:
+    """Download the whole dictionary as a shareable JSON file."""
+    from server import custom_dict
+
+    body = json.dumps(
+        {"version": 1, "terms": custom_dict.get_store().export_terms()},
+        ensure_ascii=False, indent=2,
+    )
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": "attachment; filename=diccionario-anonimizador.json"
+        },
     )
 
 

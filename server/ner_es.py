@@ -52,6 +52,17 @@ import re
 import threading
 from dataclasses import dataclass
 
+from server.lexicon_es import (
+    GENERIC_SINGLE,
+    MONTHS,
+    NEVER_IN_NAME,
+    NUMBER_WORDS,
+    PUBLIC_PHRASES,
+    REGIONS,
+    STREET_MARKERS,
+    VERBS,
+)
+
 logger = logging.getLogger("privacy_filter.ner_es")
 
 # Model list resolution: PF_NER_MODELS wins; fall back to legacy PF_NER_MODEL;
@@ -163,152 +174,39 @@ _MIN_BLOCK_LEN_FOR_DETECT = 40
 _PARAGRAPH_SEP = re.compile(r"\n\s*\n")
 
 
-# Words that spaCy's Iberian NER (or opf) routinely mis-classifies as entities
-# in formal writs because they are OOV or capitalized as headings. Only applies
-# to *single-token* candidates — a multi-token span like "Plaza Mayor de
-# Madrid" is almost certainly a real place; a lone "Plaza" is a heading.
-_SINGLE_TOKEN_STOPLIST = frozenset({
-    # Structural / heading words — ES
-    "trámite", "trámit", "tramit", "nombre", "nom",
-    "instrucción", "instrucció", "instruccio",
-    "admite", "admet", "denegado", "denegada", "denegat",
-    "nulidad", "nul·litat", "nulitat",
-    "plaza", "plaça", "calle", "carrer", "avenida", "avinguda",
-    "número", "numero", "núm", "núm.",
-    "página", "pàgina", "folio", "foli",
-    "artículo", "article", "art", "art.",
-    "expediente", "expedient", "procedimiento", "procediment",
-    "juzgado", "jutjat", "tribunal", "audiencia", "audiència",
-    "sentencia", "sentència", "auto", "acuerdo", "acord",
-    "hecho", "fet", "hechos", "fets",
-    "fundamento", "fundamentos", "fonament", "fonaments",
-    "derecho", "dret", "vistos", "resuelvo", "resolc",
-    "señor", "señora", "senyor", "senyora", "sr", "sra",
-    "don", "doña", "sr.", "sra.",
-    "parte", "partes", "part", "parts",
-    "ministerio", "ministeri", "consejería", "conselleria",
-    "razón", "raó",
-    # Roles / labels commonly appended to a name in a form
-    "letrado", "letrada", "advocat", "advocada",
-    "procurador", "procuradora",
-    "abogado", "abogada",
-    "demandante", "demandada", "demandant", "demandada",
-    "demandado", "demandat", "denunciante",
-    "testigo", "perito", "perita",
-    "domicilio", "domicili", "adreça", "direcció", "dirección",
-    "beneficiario", "beneficiaria", "beneficiària",
-    "órgano", "organ", "orgue",
-    # Catalan form-label vocabulary (this file's biggest new source of noise)
-    "dades", "annexats", "annexat", "identificació", "identificacio",
-    "sol·licitud", "sol-licitud", "sollicitud", "solicitud",
-    "algorisme", "hash", "signatura", "signat", "signada",
-    "data", "hora", "codi", "segur", "verificació", "verificacion",
-    "document", "documents", "doc",
-    "poder", "judicial", "civil", "penal", "fiscal",
-    "unitat", "deganat", "secció", "servei", "servicio",
-    "comú", "comu", "comuna",
-    "general", "jurisdicció", "classe", "class",
-    "consignaciones", "consignacions", "oficina",
-    "parlamento", "parlament", "consejo", "consell",
-    "colegios", "col·legis", "collegis",
-    "generalitat", "departament", "departamento",
-    "ministerio", "ministeri", "conselleria",
-    "administración", "administració",
-    "advierto", "dése", "dese", "adjunte", "adjuntar",
-    # Catalan common words / contractions that shouldn't be entities alone
-    "tipus", "enviament", "adreça", "adreca",
-    # Legal-code references
-    "lec", "lc", "lot", "loj", "lopj", "cc", "cp", "ce",
-    # Verbs / short filler that should never be an entity on its own
-    "rut", "nom", "adreça", "número",
-})
+# Kept as a module-level alias so existing tests and callers that referenced
+# the old private name keep working.
+_SINGLE_TOKEN_STOPLIST = GENERIC_SINGLE | NEVER_IN_NAME | VERBS
 
 _HEADING_ALLCAPS = re.compile(r"^[A-ZÁÉÍÓÚÜÑÇ][A-ZÁÉÍÓÚÜÑÇ0-9]{2,}$")
 
 # Prepositions / articles that never start a real proper-noun run in ES/CA.
-# Applied only when the span has ≥3 tokens so genuine two-token entities like
-# "El Escorial" or "La Rioja" survive.
 _LEADING_STOPWORDS = frozenset({
-    # Spanish
     "de", "del", "la", "el", "los", "las", "un", "una", "unos", "unas",
     "al", "a", "en", "por", "para", "con", "sin", "entre", "sobre",
-    "hacia", "desde", "hasta", "que", "como",
-    # Catalan
+    "hacia", "desde", "hasta", "que", "como", "si", "no", "y", "o", "u",
     "dels", "les", "els", "amb", "per", "sense", "sota", "davant",
-    "darrere", "cap", "fins", "des",
+    "darrere", "cap", "fins", "des", "com", "e",
 })
 
 # Function words that dominate a heading fragment but are rare inside person
-# names. Real names may contain "de la" (Juan de la Cruz) but never "EN", "SE",
-# "QUE" — so the ratio of function words distinguishes headings from names.
-_FUNCTION_WORDS = frozenset({
-    # Spanish
-    "de", "del", "la", "el", "los", "las", "un", "una", "unos", "unas",
-    "al", "a", "en", "por", "para", "con", "sin", "entre", "sobre",
-    "hacia", "desde", "hasta", "que", "como", "se", "no", "es", "y", "o",
-    "lo", "su", "sus", "le", "les",
-    # Catalan
-    "dels", "les", "els", "amb", "per", "sense", "sota", "davant",
-    "cap", "fins", "des", "com", "i", "o", "es", "seu", "seus", "no",
-    "ho", "que",
+# names. Real names may contain "de la" (Juan de la Cruz) but never "EN", "SE".
+_FUNCTION_WORDS = _LEADING_STOPWORDS | frozenset({
+    "se", "es", "lo", "su", "sus", "le", "les", "me", "te", "nos", "ha",
+    "han", "he", "hay", "sea", "sean", "ser", "son", "era", "fue", "muy",
+    "mas", "más", "pero", "aunque", "cuando", "donde", "cual", "cuales",
+    "quien", "quienes", "cuyo", "cuya", "esta", "este", "esto", "estas",
+    "estos", "ese", "esa", "eso", "aquel", "todo", "toda", "todos", "todas",
+    "otro", "otra", "otros", "otras", "mismo", "misma", "tal", "tales",
+    "ho", "seu", "seus", "seva", "aquest", "aquesta", "aquell", "tot",
+    "altre", "altres", "mateix",
 })
 
-# Trailing punctuation that turns a span into a form-label instead of an entity
-# ("Codi Segur de Verificació:", "Nombre completo -").
+# Trailing punctuation that turns a span into a form label, not an entity
+# ("Codi Segur de Verificació:", "Datos personales =").
 _LABEL_TRAILERS = (":", "=")
 
-# Multi-token phrases that reference PUBLIC institutions, geographic regions or
-# legal-code identifiers. These are NOT personal data under GDPR — redacting
-# them would strip the document of its context without protecting any natural
-# person. Matched case-insensitively and after collapsing whitespace.
-_PUBLIC_ENTITY_PHRASES = frozenset(p.lower() for p in {
-    # Spanish public institutions and branches
-    "administración de justicia",
-    "ministerio fiscal",
-    "poder judicial",
-    "parlamento europeo",
-    "consejo europeo",
-    "consejo",
-    "oficina judicial",
-    "asistencia jurídica gratuita",
-    "consejo general del poder judicial",
-    "cortes generales",
-    "audiencia nacional",
-    "audiencia provincial",
-    "tribunal supremo",
-    "tribunal constitucional",
-    "boletín oficial del estado",
-    "boe",
-    # Catalan public institutions
-    "administració de justícia",
-    "generalitat de catalunya",
-    "generalitat",
-    "parlament de catalunya",
-    "tribunal superior de justícia de catalunya",
-    "col·legi d'advocats",
-    "col·legi de procuradors",
-    "diari oficial de la generalitat de catalunya",
-    "dogc",
-    # Common Catalan form-label phrases (not personal data)
-    "codi segur de verificació",
-    "algorisme hash",
-    "signatura electrònica",
-    "número de sol·licitud", "número de sol-licitud",
-    "servei comú", "servei comú general", "servei comú data",
-    "secció civil", "secció penal",
-    "jutjat de primera instància",
-    "jutjat de primera instància i instrucció",
-    "unitat processal de suport directe",
-    "administració pública",
-    # Public regions
-    "cataluña", "catalunya",
-    "españa", "espanya",
-    "unión europea", "unió europea",
-    # Legal-code references frequently tagged as ORG/LOC
-    "código civil", "código penal", "código de comercio",
-    "constitución española",
-    "ley de enjuiciamiento civil", "ley de enjuiciamiento criminal",
-})
+_PUBLIC_ENTITY_PHRASES = PUBLIC_PHRASES
 
 # File-name extensions the NER sometimes wraps into ORG/PER (annex names).
 _FILENAME_RE = re.compile(
@@ -316,117 +214,316 @@ _FILENAME_RE = re.compile(
     re.IGNORECASE,
 )
 
-# OCR garbage: a long-ish alphanumeric run with no lowercase letters (mixed
-# caps and digits) is almost never a real Spanish/Catalan entity. Applied only
-# when the span is either single-token OR the whole span contains no lowercase.
+# OCR garbage: a long-ish run with no lowercase letters but mixed digits.
 _OCR_GARBAGE_MIN_LEN = 15
+
+# camelCase inside one token ("AasongoeRD", "MeaRODeRLY") — a lowercase letter
+# immediately followed by an uppercase one. Real Spanish/Catalan words and
+# names never do this; OCR of stylised text routinely does.
+_INNER_CAPS_RE = re.compile(r"[a-záéíóúüñç][A-ZÁÉÍÓÚÜÑÇ]")
+
+# A monetary amount / decimal measure: "790.794,11", "3,71MM", "262.185,85 €".
+_AMOUNT_RE = re.compile(r"^[\d.,]*\d[\d.,]*\s*(€|eur|euros?|mm|m2|m²|ha|km|%)?$",
+                        re.IGNORECASE)
+
+# Law citation: "844/2016", "10/2010", "93/2017 de 16 de febrero", "38/2003".
+# Requires a 4-digit year and exactly one slash, so a real calendar date
+# ("31/10/2025", two slashes) is never mistaken for a statute reference.
+_LAW_CITATION_RE = re.compile(r"^\d{1,4}\s*/\s*\d{4}\b")
+
+# Legal-code abbreviations that mark a citation rather than an entity.
+_LEGAL_CODES = frozenset({
+    "lec", "lecrim", "lopj", "lsc", "lgt", "lo", "rd", "rdl", "cc", "cp",
+    "ce", "et", "rgpd", "lssi", "lpac", "lrjsp", "trlgdcu", "ltaip",
+    "cnae", "iae", "bis", "ter", "quater",
+})
+
+# Characters that only reach a span through OCR corruption or fragment
+# concatenation — never inside a Spanish/Catalan name.
+_STRUCTURAL_CHARS = "()[]{}~|©«»#*_\\"
 
 
 def _normalized_phrase(text: str) -> str:
-    """Lowercase and collapse whitespace/punctuation for phrase-stoplist lookup."""
-    cleaned = re.sub(r"\s+", " ", text.strip().strip(".,;:()[]"))
+    """Lowercase and collapse whitespace/punctuation for phrase lookup."""
+    cleaned = re.sub(r"\s+", " ", text.strip().strip(".,;:()[]{}\"'"))
     return cleaned.lower()
 
 
-def _looks_like_ocr_garbage(text: str) -> bool:
-    """True for long strings with no lowercase letters and any digits/mix.
+def _tokens_of(text: str) -> list[str]:
+    """Whitespace tokens with surrounding punctuation stripped."""
+    return [t.strip(".,;:()[]\"'·-–—") for t in text.split() if t.strip(".,;:()[]\"'·-–—")]
 
-    Catches OCR-mangled hashes and identifiers like
-    ``F616YBCN9F SABLBGRVVVVM7Z06X956V7A`` that spaCy sometimes flags as ORG.
+
+def _looks_like_ocr_garbage(text: str) -> bool:
+    """True when the span is almost certainly mangled OCR output.
+
+    Three independent signals, any of which is decisive:
+
+    1. A long alphanumeric run with no lowercase at all (hashes, CSV codes).
+    2. Mostly 1-2 character tokens — "Bs il ll il i ie", "Ç EI", "SD dat".
+    3. camelCase inside a token — "AasongoeRD", "MeaRODeRLY".
     """
     stripped = text.strip()
-    if len(stripped) < _OCR_GARBAGE_MIN_LEN:
+    if not stripped:
+        return True
+
+    if (
+        len(stripped) >= _OCR_GARBAGE_MIN_LEN
+        and not any(c.islower() for c in stripped)
+        and any(c.isdigit() for c in stripped)
+        and any(c.isalpha() for c in stripped)
+    ):
+        return True
+
+    tokens = _tokens_of(stripped)
+    if len(tokens) >= 2:
+        # Only count *meaningless* short tokens. Spanish function words ("de",
+        # "la") and bare numbers are legitimately short and appear inside real
+        # addresses ("Paseo de Pereda 9"), so excluding them keeps this rule
+        # aimed at actual OCR debris ("Bs il ll il i ie", "Ç EI").
+        tiny = sum(
+            1 for t in tokens
+            if len(t) <= 2 and t.lower() not in _FUNCTION_WORDS and not t.isdigit()
+        )
+        if tiny * 2 >= len(tokens):
+            return True
+
+    return any(_INNER_CAPS_RE.search(t) for t in tokens)
+
+
+def _is_amount_or_measure(text: str) -> bool:
+    """True for monetary amounts and measurements — never personal data."""
+    stripped = text.strip().rstrip(".,;:-")
+    if "€" in stripped or "%" in stripped:
+        return True
+    if not _AMOUNT_RE.match(stripped):
         return False
-    if any(c.islower() for c in stripped):
+    # Require a decimal comma or a thousands dot so bare integers (which may
+    # be an account or phone fragment) don't get swept up here.
+    return "," in stripped or "." in stripped
+
+
+_ARTICLE_REF_RE = re.compile(r"^(art|arts|artículo|articulo|article)\.?\s*\d",
+                             re.IGNORECASE)
+
+
+def _is_law_citation(text: str) -> bool:
+    """True for law/article references: '844/2016', 'Art.4', '753.1 LEC'."""
+    stripped = text.strip()
+    # Two or more slashes means a calendar date (31/10/2025), not a statute.
+    if stripped.count("/") == 1 and _LAW_CITATION_RE.match(stripped):
+        return True
+    if _ARTICLE_REF_RE.match(stripped):
+        return True
+    # Split on periods too so "Art.4" and "art.4 LEC" both surface "art".
+    parts = {p.lower() for t in _tokens_of(stripped) for p in t.split(".") if p}
+    return bool(parts & _LEGAL_CODES)
+
+
+def _is_numeral_phrase(text: str) -> bool:
+    """True when every meaningful token is a written-out number or a month.
+
+    Catches deed headings ("NÚMERO SIETE", "CIENTO NOVENTA", "CINCO AÑOS",
+    "VEINTISIETE DE ENERO DE") and bare month/ordinal fragments.
+    """
+    # Split hyphens as well so "Uno-cinco" and "Treinta-y-dos" are seen as
+    # numerals. Real hyphenated surnames ("López-Monís") survive because their
+    # parts aren't number words.
+    tokens = [
+        p.lower()
+        for t in _tokens_of(text)
+        for p in t.split("-") if p
+    ]
+    if not tokens:
+        return True
+    meaningful = [t for t in tokens if t not in _LEADING_STOPWORDS]
+    if not meaningful:
+        return True
+    allowed = NUMBER_WORDS | MONTHS | {"numero", "número", "años", "año",
+                                       "anos", "dias", "días", "meses",
+                                       "plaza", "plazas", "doc", "documento"}
+    return all(t in allowed or t.isdigit() for t in meaningful)
+
+
+_LOCATION_LABELS = frozenset({
+    "ES_NER_LOC", "ES_NER_LUGAR", "LOC", "LUGAR",
+})
+
+
+def _in_vocab(token: str, vocab: frozenset[str]) -> bool:
+    """Membership test that also tries the singular of a plural token.
+
+    Lets the lexicon carry one form per word: "acreditados" matches
+    "acreditado", "obligaciones" matches "obligacion". Only the two common
+    Spanish plural suffixes are stripped, and only when the result is long
+    enough to still be a word.
+    """
+    if token in vocab:
+        return True
+    if token.endswith("es") and len(token) > 4 and token[:-2] in vocab:
+        return True
+    if token.endswith("s") and len(token) > 3 and token[:-1] in vocab:
+        return True
+    return False
+
+
+def _is_generic_token(token: str) -> bool:
+    """True if ``token`` is vocabulary the lexicon already knows.
+
+    Used by the "no unknown word" rule: a span made entirely of generic
+    vocabulary describes something rather than naming someone.
+    """
+    if token.isdigit():
+        return True
+    if token in _FUNCTION_WORDS or token in NUMBER_WORDS or token in MONTHS:
+        return True
+    return (
+        _in_vocab(token, NEVER_IN_NAME)
+        or _in_vocab(token, GENERIC_SINGLE)
+        or _in_vocab(token, VERBS)
+    )
+
+
+def _is_bare_place(text: str, tokens: list[str]) -> bool:
+    """True for a municipality/region name with no address detail.
+
+    Policy (set by the user): a lone toponym ("Barcelona", "Barberá del
+    Vallés", "Cantabria") is not personal data — only a full address is. So a
+    LOC-shaped span is rejected unless it carries a street-type marker or a
+    number, either of which means we're looking at an actual address.
+    """
+    if len(tokens) > 4:
         return False
-    return any(c.isdigit() for c in stripped) and any(c.isalpha() for c in stripped)
+    lowered = {t.lower() for t in tokens}
+    if lowered & STREET_MARKERS:
+        return False
+    if any(any(c.isdigit() for c in t) for t in tokens):
+        return False
+    # Every token must look like a plain capitalised toponym.
+    return all(t[:1].isupper() or t.lower() in _LEADING_STOPWORDS
+               for t in tokens if t)
 
 
-def is_probably_false_positive(text: str, *, strict: bool = True) -> bool:
-    """True if a statistical (NER or opf) span looks like a heading, filler,
-    filename, public institution, or OCR garbage — anything that redacting
-    would remove document context without protecting personal data.
+def is_probably_false_positive(
+    text: str,
+    *,
+    strict: bool = True,
+    label: str | None = None,
+) -> bool:
+    """True if a statistical span should not be redacted.
 
-    ``strict=True`` (default) applies the full ruleset, including case and
-    positional heuristics designed for spaCy NER (whose false-positive shapes
-    are more predictable). ``strict=False`` uses only the source-independent
-    rules — content-based rejections that hold for any statistical model.
-    The opf transformer, which is case-agnostic and language-agnostic, is
-    filtered in non-strict mode so it can still catch legitimate lowercase
-    mentions of a person while public-entity / filename / garbage rejections
-    stay in force.
+    ``strict`` enables the shape heuristics tuned for spaCy NER's failure
+    modes (all-caps headings, prose runs, leading prepositions). The opf
+    transformer passes ``strict=False`` because it is case-agnostic; the
+    content-based rejections below still apply to it.
 
-    The deterministic recognizers (DNI/IBAN/CIF/…) bypass this check; their
-    matches are already structurally validated.
+    ``label`` is the source label when known ("ES_NER_LOC", "private_person",
+    …). It only gates the bare-toponym rule, which must not fire on person
+    names that happen to be short and capitalised.
+
+    Deterministic recognizers (DNI/IBAN/CIF/registry refs) bypass this check
+    entirely — their matches are already structurally validated.
     """
     stripped = text.strip().rstrip(".,;")
     if len(stripped) < 3:
         return True
 
-    # Form labels: "Codi Segur de Verificació:" — trailing punct is a strong
-    # signal the tagger swept up a field name, not an entity.
+    # Form labels: trailing ':' or '=' means a field name was swept up.
     if text.rstrip().endswith(_LABEL_TRAILERS):
         return True
 
-    # File names in annex references ("bancaria.pdf", "gastos.pdf").
     if _FILENAME_RE.fullmatch(stripped):
         return True
 
-    # Structural characters that never appear inside a person / place / org
-    # name in Spanish/Catalan writs ("LEC).La", "753 LEC.). Doc"). Parentheses
-    # and slashes mid-string indicate OCR corruption or fragment concatenation.
-    if any(ch in stripped for ch in "()[]{}/\\"):
+    if any(ch in stripped for ch in _STRUCTURAL_CHARS):
         return True
 
-    # Public institutions / regions / legal-code references — not PII.
-    if _normalized_phrase(text) in _PUBLIC_ENTITY_PHRASES:
+    normalized = _normalized_phrase(text)
+    if normalized in PUBLIC_PHRASES or normalized in REGIONS:
         return True
 
-    # OCR-garbage-shaped runs.
+    if _is_amount_or_measure(stripped):
+        return True
+
+    if _is_law_citation(stripped):
+        return True
+
+    if _is_numeral_phrase(stripped):
+        return True
+
     if _looks_like_ocr_garbage(stripped):
         return True
 
-    tokens = stripped.split()
+    tokens = _tokens_of(stripped)
+    if not tokens:
+        return True
+    lowered = [t.lower() for t in tokens]
+
+    # Contract/legal boilerplate: one such word anywhere means clause text.
+    # A real name contains none of them, so this is safe at any span length.
+    # Plurals are matched by also probing the singular, so the lexicon only
+    # needs one form per word ("acreditados" → "acreditado").
+    if any(_in_vocab(t, NEVER_IN_NAME) for t in lowered):
+        return True
+
+    if any(_in_vocab(t, VERBS) for t in lowered):
+        return True
+
+    # Nothing but known generic vocabulary → a description, not an entity.
+    # A real name or address always contributes at least one word the lexicon
+    # doesn't know ("Pereda", "Comadrán", "García"). This is the rule that
+    # catches "Planta Sótano" / "Parcela Urbana" without a bespoke entry.
+    if all(_is_generic_token(t) for t in lowered):
+        return True
+
+    # Bare municipality / region (policy: only full addresses are PII, a lone
+    # toponym is not). Applies to single-token LOC too — one word can never be
+    # a complete address.
+    if label in _LOCATION_LABELS and _is_bare_place(stripped, tokens):
+        return True
 
     # --- Single-token rules ---
     if len(tokens) == 1:
         if _HEADING_ALLCAPS.fullmatch(stripped):
             return True
-        if stripped.lower() in _SINGLE_TOKEN_STOPLIST:
+        if _in_vocab(lowered[0], GENERIC_SINGLE):
             return True
         return False
 
-    # --- Multi-token rules ---
-    # These are aggressive shape-based heuristics tuned for spaCy NER's
-    # failure modes; opf (which passes strict=False) skips them.
+    # --- Multi-token shape heuristics (spaCy only) ---
     if not strict:
         return False
 
-    # 1. No capitalized token anywhere → body prose, not an entity.
-    #    ("garantit amb signatura-e", "compareix davant el jutjat")
-    if not any(t and t[0].isupper() for t in tokens):
+    # No capitalised token → body prose, not an entity.
+    if not any(t[:1].isupper() for t in tokens if t):
         return True
 
-    # 2. Three or more all-caps tokens WHERE more than half are function words
-    #    → heading fragment ("LUGAR EN EL QUE", "DE EMPLAZAMIENTO PERSONA A LA
-    #    QUE SE"). Real all-caps names like "NOELIA LARA MARTIN" or "JUAN DE LA
-    #    CRUZ" don't cross the function-word ratio threshold.
+    # All-caps span where function words make up half or more of the tokens →
+    # clause heading ("ASI COMO", "LUGAR EN EL QUE", "DE EMPLAZAMIENTO
+    # PERSONA A LA QUE SE"). Real all-caps names ("NOELIA LARA MARTIN",
+    # "JUAN DE DIOS VALENZUELA") stay well under the threshold.
     alpha_tokens = [t for t in tokens if any(c.isalpha() for c in t)]
-    if len(alpha_tokens) >= 3 and all(t.isupper() for t in alpha_tokens):
-        func_hits = sum(1 for t in tokens if t.lower() in _FUNCTION_WORDS)
-        if func_hits * 2 > len(tokens):
+    if len(alpha_tokens) >= 2 and all(t.isupper() for t in alpha_tokens):
+        func_hits = sum(1 for t in lowered if t in _FUNCTION_WORDS)
+        if func_hits * 2 >= len(tokens):
             return True
 
-    # 3. ≥3 tokens starting with a preposition/article → heading fragment.
-    #    ("DEL EMPLAZAMIENTO Comparecer"). Two-token "El Escorial" survives.
-    if len(tokens) >= 3 and tokens[0].lower().rstrip(".,") in _LEADING_STOPWORDS:
+    # ≥3 tokens starting with a preposition/article → heading fragment.
+    if len(tokens) >= 3 and lowered[0] in _LEADING_STOPWORDS:
         return True
+
+    # Two tokens: article/preposition + filler noun ("la Ley", "el Tribunal").
+    if len(tokens) == 2 and lowered[0] in _LEADING_STOPWORDS:
+        if lowered[1] in _SINGLE_TOKEN_STOPLIST:
+            return True
 
     return False
 
 
-# Legacy alias — some tests still reference the private name.
+# Legacy alias — some tests reference the private name.
 _is_probably_false_positive = is_probably_false_positive
+
+
 
 
 _CATALAN_CONTRACTION_RE = re.compile(r"^[dlDL]['’]\w+$")
@@ -524,12 +621,16 @@ def _select_nlps_for(block: str) -> list:
     return _nlps
 
 
-def analyze(text: str) -> list[NERSpan]:
+def analyze(text: str, *, strict: bool = True) -> list[NERSpan]:
     """Run per-block language-appropriate NER over the whole document.
 
     Splits ``text`` into paragraphs, routes each to the matching spaCy model,
     then translates entity offsets back to absolute positions in the original
     string. Duplicate spans (same offset+label) are dropped.
+
+    ``strict`` controls the false-positive filter's aggressiveness — see
+    :func:`is_probably_false_positive`. Non-strict mode is used by the
+    "aggressive" operating point to keep more spans at the cost of precision.
     """
     if not text:
         return []
@@ -551,7 +652,9 @@ def analyze(text: str) -> list[NERSpan]:
                 # text first, because trimming a form label like "Codi Segur de
                 # Verificació" would leave "Codi Segur de" — no longer a match
                 # for the phrase stoplist.
-                if is_probably_false_positive(ent_text):
+                if is_probably_false_positive(
+                    ent_text, strict=strict, label=f"ES_NER_{ent.label_}"
+                ):
                     continue
                 # Trim trailing role/label tokens ("Mateo Ruiz Cano Domicilio"
                 # → "Mateo Ruiz Cano", "Dani Tipus d'enviament" → "Dani").
@@ -564,7 +667,9 @@ def analyze(text: str) -> list[NERSpan]:
                     # Re-check on the trimmed form: after peeling role words
                     # a genuine name may still be left, but a heading remnant
                     # like "Codi Segur de" should be dropped too.
-                    if is_probably_false_positive(ent_text):
+                    if is_probably_false_positive(
+                        ent_text, strict=strict, label=f"ES_NER_{ent.label_}"
+                    ):
                         continue
                 abs_start = start_off + start_c
                 abs_end = start_off + end_c

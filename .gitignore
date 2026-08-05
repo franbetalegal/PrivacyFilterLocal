@@ -54,3 +54,8 @@ logs/
 # Agent skills (local-only, synced via opencode, not part of the repo)
 .agents/
 skills-lock.json
+
+# User-editable custom dictionary — contains real terms the firm adds to
+# anonymize (names, companies). Must never be committed.
+data/
+custom_terms.json

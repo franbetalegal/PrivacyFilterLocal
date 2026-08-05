@@ -2,15 +2,17 @@ import { useEffect, useState } from "react";
 import { getVersion, getHealth, shutdown, DIAGNOSTICS_URL, type Health } from "./api";
 import TextTab from "./tabs/TextTab";
 import FilesTab from "./tabs/FilesTab";
+import DictionaryTab from "./tabs/DictionaryTab";
 import InfoTab from "./tabs/InfoTab";
 import UpdateBanner from "./components/UpdateBanner";
 import PreparingScreen from "./components/PreparingScreen";
 
-type TabKey = "text" | "files" | "info";
+type TabKey = "text" | "files" | "dictionary" | "info";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "text", label: "Text" },
   { key: "files", label: "Files" },
+  { key: "dictionary", label: "Diccionario" },
   { key: "info", label: "Info" },
 ];
 
@@ -123,6 +125,7 @@ export default function App() {
             state, so there is no Gradio/Svelte reactive loop to freeze. */}
         {tab === "text" && <TextTab />}
         {tab === "files" && <FilesTab />}
+        {tab === "dictionary" && <DictionaryTab />}
         {tab === "info" && <InfoTab />}
       </main>
     </div>

@@ -23,6 +23,7 @@ for their own OCR call — see :func:`_ocr_page`.
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import os
@@ -42,6 +43,10 @@ logger = logging.getLogger("privacy_filter.pdf_ops")
 # the parallel path *slower*. So we parallelize only when at least this many
 # pages actually need OCR.
 _MIN_OCR_PAGES_FOR_PARALLEL = 3
+
+# Never rasterise below this, even when the embedded image is coarser:
+# Tesseract degrades sharply on very low-resolution input.
+_MIN_OCR_DPI = 150
 
 
 @dataclass(frozen=True)
@@ -66,6 +71,15 @@ def _extract_page(page, page_idx: int, fitz_mod, *, ocr_threads: int = 1):
     see :func:`_ocr_page` for why this matters when pages are processed
     concurrently.
     """
+    # Cheap test first. ``rawdict`` costs ~100 ms on an image-only page because
+    # it materialises the embedded image bytes into the returned dict — data we
+    # then skip via the ``type != 0`` filter below. ``get_text("text")`` answers
+    # "is there a text layer?" in ~0.08 ms, so probing with it saves ~23 s of
+    # CPU on a 232-page scan. Behaviour is identical: with no text layer the
+    # loop below sets no characters and we'd fall through to OCR anyway.
+    if not page.get_text("text").strip():
+        return _ocr_page(page, page_idx, fitz_mod, ocr_threads=ocr_threads)
+
     raw = page.get_text("rawdict")
     parts: list[str] = []
     coords: list[CharCoord] = []
@@ -87,6 +101,48 @@ def _extract_page(page, page_idx: int, fitz_mod, *, ocr_threads: int = 1):
     if not found_char:
         return _ocr_page(page, page_idx, fitz_mod, ocr_threads=ocr_threads)
     return "".join(parts), coords
+
+
+def _native_dpi(page) -> float:
+    """Resolution of the largest image embedded in ``page``, or 0.0 if none.
+
+    Used to avoid upsampling: rasterising a 200-dpi scan at 300 dpi produces
+    50% more pixels to encode and recognise while interpolating no new detail.
+    """
+    try:
+        info = page.get_image_info()
+    except Exception:  # noqa: BLE001 — never let a probe break extraction
+        return 0.0
+    best = 0.0
+    page_w = page.rect.width or 1.0
+    page_h = page.rect.height or 1.0
+    for img in info:
+        w = img.get("width") or 0
+        h = img.get("height") or 0
+        if not w or not h:
+            continue
+        # 72 pt per inch; take the smaller axis so we never overstate.
+        best = max(best, min(w * 72.0 / page_w, h * 72.0 / page_h))
+    return best
+
+
+def _effective_dpi(page) -> int:
+    """Raster DPI for this page: the configured value, capped at native.
+
+    ``PF_OCR_DPI`` (default 200) is the ceiling. Measured on synthetic scans,
+    200 dpi beat 300 dpi on validated-identifier recall (92.9% vs 92.2%,
+    McNemar p=0.024) *and* was faster — 300 dpi mostly interpolates noise. But
+    a document already stored below the ceiling regressed when it was
+    upsampled, so we clamp to the page's own resolution and keep a floor so a
+    very low-resolution scan is not made worse.
+    """
+    ceiling = int(os.environ.get("PF_OCR_DPI", "200"))
+    if os.environ.get("PF_OCR_CLAMP_NATIVE", "1").strip() == "0":
+        return ceiling
+    native = _native_dpi(page)
+    if native <= 0:
+        return ceiling
+    return max(_MIN_OCR_DPI, int(min(ceiling, native)))
 
 
 def _ocr_page(page, page_idx: int, fitz_mod, *, ocr_threads: int = 1):
@@ -116,11 +172,18 @@ def _ocr_page(page, page_idx: int, fitz_mod, *, ocr_threads: int = 1):
         return "", []
 
     try:
-        dpi = int(os.environ.get("PF_OCR_DPI", "300"))
-        lang = os.environ.get("PF_OCR_LANG", "spa+eng")
+        dpi = _effective_dpi(page)
+        lang = os.environ.get("PF_OCR_LANG", "spa+cat+eng")
         os.environ["OMP_THREAD_LIMIT"] = str(max(1, ocr_threads))
-        pix = page.get_pixmap(dpi=dpi)
-        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        # Grayscale, and hand the raw samples straight to PIL. Tesseract
+        # converts to grayscale internally anyway, so rendering 3 channels
+        # produces two thirds of the pixels for nothing; and going through
+        # ``tobytes("png")`` makes the bitmap cross three codec passes (MuPDF
+        # encodes PNG → PIL decodes → pytesseract re-encodes, because it keys
+        # off ``image.format``). Measured together: −18% per page, with
+        # byte-identical extracted text and byte-identical rectangles.
+        pix = page.get_pixmap(dpi=dpi, colorspace=fitz_mod.csGRAY)
+        img = Image.frombytes("L", (pix.width, pix.height), pix.samples)
         data = pytesseract.image_to_data(
             img, lang=lang, output_type=pytesseract.Output.DICT
         )
@@ -222,6 +285,60 @@ _pdf_pool_lock = threading.Lock()
 _pdf_pool: Optional[ProcessPoolExecutor] = None
 _pdf_pool_size = 0
 
+# Extraction cache keyed by content digest + size. A single upload is extracted
+# twice per request (detection, then the rebuild inside redact_by_offsets); the
+# leak check no longer comes through here, since server/verify.py reads the
+# output's text layer directly. Keying on content rather than path also makes
+# the /api/redact-file/apply re-upload a cache hit instead of a second OCR pass.
+#
+# Small on purpose (2 entries): the API only handles one active upload at a
+# time in practice, and stale entries hold no PII beyond what the caller
+# already has in memory for the same request. Not thread-safe by design —
+# concurrent requests would each be over their own upload path.
+_EXTRACT_CACHE_SIZE = 2
+_extract_cache: list[tuple[tuple[str, int, int], tuple[str, list[CharCoord]]]] = []
+_extract_cache_lock = threading.Lock()
+
+
+def _cache_key(pdf_path: str) -> Optional[tuple[str, int]]:
+    """Identify the *content*, not the path.
+
+    Keying on the path meant the /api/redact-file/apply endpoint — which
+    re-uploads identical bytes to a new mkstemp path — always missed and paid
+    for a second full OCR pass. A size + digest key makes that a hit.
+    """
+    try:
+        st = os.stat(pdf_path)
+        with open(pdf_path, "rb") as fh:
+            digest = hashlib.blake2b(fh.read(), digest_size=16).hexdigest()
+    except OSError:
+        return None
+    return (digest, st.st_size)
+
+
+def _cache_get(key: tuple) -> Optional[tuple[str, list[CharCoord]]]:
+    with _extract_cache_lock:
+        for k, v in _extract_cache:
+            if k == key:
+                return v
+    return None
+
+
+def _cache_put(key: tuple, value: tuple[str, list[CharCoord]]) -> None:
+    with _extract_cache_lock:
+        _extract_cache[:] = [
+            (k, v) for k, v in _extract_cache if k != key
+        ]
+        _extract_cache.append((key, value))
+        del _extract_cache[:-_EXTRACT_CACHE_SIZE]
+
+
+def clear_extract_cache() -> None:
+    """Drop every cached extraction; call this after the request is done so
+    PII text doesn't linger in memory longer than needed."""
+    with _extract_cache_lock:
+        _extract_cache.clear()
+
 
 def _get_pdf_pool(size: int) -> ProcessPoolExecutor:
     """Return a page-extraction process pool sized at least ``size``.
@@ -247,10 +364,20 @@ def extract_with_map(pdf_path: str) -> Optional[tuple[str, list[CharCoord]]]:
 
     Pages are split into contiguous ranges and extracted in parallel across
     OS processes when the document has enough pages to be worth it (see
-    :data:`_MIN_PAGES_FOR_PARALLEL_EXTRACT`) and the host has spare cores
-    (see :mod:`server.concurrency`) — otherwise this runs sequentially in the
+    :data:`_MIN_OCR_PAGES_FOR_PARALLEL`) and the host has spare cores (see
+    :mod:`server.concurrency`) — otherwise this runs sequentially in the
     current process, identically to before parallel extraction existed.
+
+    Results are cached by ``(path, size, mtime)`` so a single request that
+    extracts the same upload multiple times (detection → redaction rebuild →
+    leak verification) only pays the OCR cost once. See
+    :func:`clear_extract_cache` for the request-end cleanup.
     """
+    key = _cache_key(pdf_path)
+    if key is not None:
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
     try:
         import fitz
     except ImportError as exc:
@@ -282,6 +409,10 @@ def extract_with_map(pdf_path: str) -> Optional[tuple[str, list[CharCoord]]]:
         # full core budget for each page's own OCR since nothing else is
         # running concurrently. Text-layer PDFs always take this path — they're
         # fast enough that process-spawn overhead would only slow them down.
+        logger.info(
+            "PDF extract sequential: %d pages (%d need OCR), workers=%d",
+            num_pages, ocr_pages, concurrency.worker_count(),
+        )
         chunk = _extract_page_range(
             pdf_path, 0, num_pages, fitz, ocr_threads=concurrency.worker_count()
         )
@@ -292,6 +423,10 @@ def extract_with_map(pdf_path: str) -> Optional[tuple[str, list[CharCoord]]]:
             all_coords.append(CharCoord(page_idx, None))
     else:
         ranges = _split_ranges(num_pages, workers)
+        logger.info(
+            "PDF extract parallel: %d pages (%d OCR) → %d workers, ranges=%s",
+            num_pages, ocr_pages, len(ranges), ranges,
+        )
         pool = _get_pdf_pool(len(ranges))
         futures = [
             pool.submit(_extract_page_range_worker, pdf_path, start, end)
@@ -310,7 +445,10 @@ def extract_with_map(pdf_path: str) -> Optional[tuple[str, list[CharCoord]]]:
 
     text = "".join(all_parts)
     assert len(text) == len(all_coords), "coord map / text length mismatch"
-    return text, all_coords
+    result = (text, all_coords)
+    if key is not None:
+        _cache_put(key, result)
+    return result
 
 
 def extract_text(pdf_path: str) -> Optional[str]:
@@ -384,6 +522,13 @@ def redact_by_offsets(input_path: str, output_path: str, detected_spans) -> None
                     align=0,
                 )
             page.apply_redactions()
-        doc.save(output_path)
+        # ``apply_redactions`` re-encodes every touched page, and on a scanned
+        # document that means a full-page raster per page. PyMuPDF's default
+        # save writes those uncompressed: measured on a 24-page scan, an 8.3 MB
+        # input produced a 286.9 MB output (~12 MB/page, i.e. ~2.8 GB for a
+        # 232-page file). deflate + garbage collection brings that to 7.8 MB
+        # (~37x smaller) for ~1.3 s per 24 pages, and makes the leak-check
+        # re-read about 10x faster.
+        doc.save(output_path, deflate=True, garbage=3)
     finally:
         doc.close()

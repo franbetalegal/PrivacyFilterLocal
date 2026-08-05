@@ -28,7 +28,7 @@ def _disable_ner_by_default(monkeypatch):
 
     Individual tests below opt back in by overriding ``ner_es.analyze``.
     """
-    monkeypatch.setattr(ner_es, "analyze", lambda text: [])
+    monkeypatch.setattr(ner_es, "analyze", lambda text, **_:  [])
 
 
 def _stub_opf_result(text: str, spans):
@@ -182,7 +182,7 @@ def test_ner_only_source_produces_spans(monkeypatch):
     text = "El testigo, Juan García, declaró ayer."
     monkeypatch.setattr(
         ner_es, "analyze",
-        lambda t: [_ner_span(t, "Juan García", "ES_NER_PER")],
+        lambda t, **_:  [_ner_span(t, "Juan García", "ES_NER_PER")],
     )
     opf = _stub_opf_result(text, [])
     result = merge_and_redact(text, opf)
@@ -196,7 +196,7 @@ def test_ner_and_opf_agree_yield_one_span_and_one_token(monkeypatch):
     text = "Juan García firmó."
     monkeypatch.setattr(
         ner_es, "analyze",
-        lambda t: [_ner_span(t, "Juan García", "ES_NER_PER")],
+        lambda t, **_:  [_ner_span(t, "Juan García", "ES_NER_PER")],
     )
     opf = _stub_opf_result(text, [
         (0, 11, "private_person", "Juan García"),
@@ -215,7 +215,7 @@ def test_ner_person_and_opf_person_share_placeholder(monkeypatch):
     second = text.index("Juan García", 12)
     monkeypatch.setattr(
         ner_es, "analyze",
-        lambda t: [ner_es.NERSpan(
+        lambda t, **_:  [ner_es.NERSpan(
             start=second, end=second + 11,
             entity_type="ES_NER_PER", score=0.7, text="Juan García",
         )],
@@ -233,7 +233,7 @@ def test_ner_location_yields_lugar_placeholder(monkeypatch):
     text = "El juzgado de Madrid resuelve."
     monkeypatch.setattr(
         ner_es, "analyze",
-        lambda t: [_ner_span(t, "Madrid", "ES_NER_LOC")],
+        lambda t, **_:  [_ner_span(t, "Madrid", "ES_NER_LOC")],
     )
     opf = _stub_opf_result(text, [])
     result = merge_and_redact(text, opf)
@@ -245,7 +245,7 @@ def test_ner_organization_yields_organizacion_placeholder(monkeypatch):
     text = "Comparece ACME S.L. ante el juzgado."
     monkeypatch.setattr(
         ner_es, "analyze",
-        lambda t: [_ner_span(t, "ACME S.L.", "ES_NER_ORG")],
+        lambda t, **_:  [_ner_span(t, "ACME S.L.", "ES_NER_ORG")],
     )
     opf = _stub_opf_result(text, [])
     result = merge_and_redact(text, opf)
@@ -262,7 +262,7 @@ def test_deterministic_dni_wins_over_ner_overlap(monkeypatch):
     text = "Comparece 12345678Z ante el juzgado."
     monkeypatch.setattr(
         ner_es, "analyze",
-        lambda t: [_ner_span(t, "12345678Z", "ES_NER_PER")],
+        lambda t, **_:  [_ner_span(t, "12345678Z", "ES_NER_PER")],
     )
     opf = _stub_opf_result(text, [])
     result = merge_and_redact(text, opf)
@@ -272,8 +272,167 @@ def test_deterministic_dni_wins_over_ner_overlap(monkeypatch):
 
 def test_missing_spacy_degrades_gracefully(monkeypatch):
     """If ner_es.analyze raises or returns [], the pipeline still works."""
-    monkeypatch.setattr(ner_es, "analyze", lambda t: [])
+    monkeypatch.setattr(ner_es, "analyze", lambda t, **_:  [])
     text = "El DNI 12345678Z aparece aquí."
     opf = _stub_opf_result(text, [])
     result = merge_and_redact(text, opf)
     assert any(s.label == "DNI" for s in result.detected_spans)
+
+
+# --- Operating mode (fase 5) ------------------------------------------------
+
+
+def test_merge_and_redact_rejects_unknown_mode():
+    opf = _stub_opf_result("hi", [])
+    with pytest.raises(ValueError, match="mode"):
+        merge_and_redact("hi", opf, mode="turbo")
+
+
+def test_conservative_mode_filters_opf_person_span_that_looks_like_heading():
+    """A dodgy opf NOMBRE span (all-caps heading shape) survives in balanced
+    mode (opf strict=False) but is dropped in conservative mode (opf strict=True)."""
+    text = "En el juicio, DE EMPLAZAMIENTO PERSONA A LA QUE SE cita..."
+    span_start = text.index("DE EMPLAZAMIENTO PERSONA A LA QUE SE")
+    span_end = span_start + len("DE EMPLAZAMIENTO PERSONA A LA QUE SE")
+    opf = _stub_opf_result(text, [(span_start, span_end, "private_person",
+                                    "DE EMPLAZAMIENTO PERSONA A LA QUE SE")])
+    balanced_result = merge_and_redact(text, opf, mode="balanced")
+    conservative_result = merge_and_redact(text, opf, mode="conservative")
+    # balanced keeps it (opf non-strict lets shape heuristics through)
+    assert any(s.label == "NOMBRE" for s in balanced_result.detected_spans)
+    # conservative drops it (opf strict → shape heuristics reject the heading)
+    assert not any(s.label == "NOMBRE" for s in conservative_result.detected_spans)
+
+
+def test_aggressive_mode_keeps_ner_spans_that_balanced_would_filter(monkeypatch):
+    """A NER span that fails strict FP heuristics survives in aggressive mode."""
+    text = "El acta DEL EMPLAZAMIENTO Comparecer se archivará."
+    def fake_analyze(t, *, strict=True):
+        # ner_es itself would drop this in strict mode; simulate the raw hit.
+        if strict:
+            return []
+        return [ner_es.NERSpan(
+            start=t.index("DEL EMPLAZAMIENTO Comparecer"),
+            end=t.index("DEL EMPLAZAMIENTO Comparecer") + len("DEL EMPLAZAMIENTO Comparecer"),
+            entity_type="ES_NER_PER", score=0.7,
+            text="DEL EMPLAZAMIENTO Comparecer",
+        )]
+    monkeypatch.setattr(ner_es, "analyze", fake_analyze)
+    opf = _stub_opf_result(text, [])
+
+    balanced = merge_and_redact(text, opf, mode="balanced")
+    aggressive = merge_and_redact(text, opf, mode="aggressive")
+    assert not any(s.label == "NOMBRE" for s in balanced.detected_spans)
+    assert any(s.label == "NOMBRE" for s in aggressive.detected_spans)
+
+
+@pytest.mark.parametrize("mode", ["conservative", "balanced", "aggressive"])
+def test_deterministic_spans_survive_every_mode(mode):
+    """The DNI check-digit validator is independent of mode."""
+    text = "El DNI 12345678Z acredita al interesado."
+    opf = _stub_opf_result(text, [])
+    result = merge_and_redact(text, opf, mode=mode)
+    assert any(s.label == "DNI" for s in result.detected_spans), mode
+
+
+# --- Numeric law-article references must never become DIRECCION -----------
+
+@pytest.mark.parametrize("mode", ["conservative", "balanced", "aggressive"])
+@pytest.mark.parametrize("ref", ["753", "753.1", "750", "1.234-5"])
+def test_numeric_reference_never_tagged_as_direccion(ref, mode):
+    """opf routinely mistags law article numbers as private_address; the
+    pipeline drops them in every mode because they contain no letters."""
+    text = f"Conforme al artículo {ref} LEC, se acuerda..."
+    start = text.index(ref)
+    opf = _stub_opf_result(text, [(start, start + len(ref), "private_address", ref)])
+    result = merge_and_redact(text, opf, mode=mode)
+    assert not any(s.label == "DIRECCION" for s in result.detected_spans), mode
+
+
+def test_real_date_with_slashes_still_kept():
+    """Dates like 31/10/2025 must survive the numeric-reference guard."""
+    text = "Firmado el 31/10/2025 en Barcelona."
+    start = text.index("31/10/2025")
+    opf = _stub_opf_result(text, [(start, start + 10, "private_date", "31/10/2025")])
+    result = merge_and_redact(text, opf, mode="balanced")
+    assert any(s.label == "FECHA" for s in result.detected_spans)
+
+
+def test_real_address_with_letters_still_kept():
+    """Real addresses with street names must not be caught by the guard."""
+    text = "Domicilio: Calle Mayor 5, 28013 Madrid."
+    start = text.index("Calle Mayor 5")
+    opf = _stub_opf_result(text, [
+        (start, start + len("Calle Mayor 5"), "private_address", "Calle Mayor 5"),
+    ])
+    result = merge_and_redact(text, opf, mode="balanced")
+    assert any(s.label == "DIRECCION" for s in result.detected_spans)
+
+
+# --- Overlap resolution: correctness and complexity ------------------------
+
+
+def _raw(start, end, source="ner", score=0.7, label="ES_NER_PER"):
+    return pipeline._RawSpan(start=start, end=end, label=label,
+                             text=f"s{start}", source=source, score=score)
+
+
+def test_resolve_overlaps_output_is_sorted_and_disjoint():
+    spans = [_raw(50, 60), _raw(0, 10), _raw(5, 15), _raw(20, 30), _raw(25, 35)]
+    kept = pipeline._resolve_overlaps(spans)
+    assert [s.start for s in kept] == sorted(s.start for s in kept)
+    for a, b in zip(kept, kept[1:]):
+        assert a.end <= b.start, f"{a} overlaps {b}"
+
+
+def test_resolve_overlaps_deterministic_beats_statistical():
+    """A validated deterministic span must win over an overlapping NER one."""
+    det = _raw(10, 19, source="det", score=1.0, label="ES_DNI")
+    ner = _raw(10, 19, source="ner", score=0.7)
+    kept = pipeline._resolve_overlaps([ner, det])
+    assert len(kept) == 1 and kept[0].source == "det"
+
+
+def test_resolve_overlaps_prefers_longer_span():
+    short = _raw(10, 15)
+    long_ = _raw(10, 25)
+    kept = pipeline._resolve_overlaps([short, long_])
+    assert len(kept) == 1 and kept[0].end == 25
+
+
+def test_resolve_overlaps_matches_bruteforce_on_random_input():
+    """The O(n log n) sweep must agree with the naive O(n²) definition."""
+    import random
+    rnd = random.Random(1234)
+    spans = []
+    for _ in range(400):
+        s = rnd.randrange(0, 4000)
+        spans.append(_raw(s, s + rnd.randrange(1, 25),
+                          source=rnd.choice(["det", "opf", "ner"]),
+                          score=rnd.choice([0.45, 0.7, 0.85, 1.0])))
+
+    def bruteforce(items):
+        def priority(s):
+            return (0 if s.source == "det" else 1, -(s.end - s.start), -s.score, s.start)
+        kept = []
+        for span in sorted(items, key=priority):
+            if not any(not (span.end <= k.start or span.start >= k.end) for k in kept):
+                kept.append(span)
+        kept.sort(key=lambda s: s.start)
+        return kept
+
+    fast = pipeline._resolve_overlaps(spans)
+    slow = bruteforce(spans)
+    assert [(s.start, s.end, s.source) for s in fast] == \
+           [(s.start, s.end, s.source) for s in slow]
+
+
+def test_resolve_overlaps_scales_to_thousands_of_spans():
+    """Guard against a regression back to quadratic behaviour."""
+    import time
+    spans = [_raw(i * 7, i * 7 + 5) for i in range(6000)]
+    t0 = time.time()
+    kept = pipeline._resolve_overlaps(spans)
+    elapsed = time.time() - t0
+    assert len(kept) == 6000
+    assert elapsed < 2.0, f"6000 spans took {elapsed:.2f}s — quadratic again?"

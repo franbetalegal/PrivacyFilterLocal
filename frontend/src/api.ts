@@ -8,6 +8,17 @@ export interface DetectedSpan {
   placeholder: string;
 }
 
+/** Precision ↔ recall operating point. Higher precision on the left,
+ *  higher recall on the right. Unknown values fall back server-side to
+ *  ``balanced``. */
+export type Mode = "conservative" | "balanced" | "aggressive";
+export const MODES: Mode[] = ["conservative", "balanced", "aggressive"];
+export const MODE_LABEL: Record<Mode, string> = {
+  conservative: "Conservador (menos falsos positivos)",
+  balanced: "Equilibrado (por defecto)",
+  aggressive: "Máxima cobertura (menos fugas)",
+};
+
 export interface RedactTextResult {
   redacted_text: string;
   detected_spans: DetectedSpan[];
@@ -15,6 +26,16 @@ export interface RedactTextResult {
   warning?: string | null;
   elapsed: number;
   empty?: boolean;
+  mode?: Mode;
+}
+
+/** Per-stage wall time in seconds, as measured by the server. */
+export interface StageTimings {
+  extract: number;
+  detect: number;
+  redact: number;
+  verify: number;
+  total: number;
 }
 
 export interface RedactFileResult {
@@ -24,6 +45,23 @@ export interface RedactFileResult {
   elapsed: number;
   download_token: string | null;
   download_name: string | null;
+  mode?: Mode;
+  leaked_pii_count?: number;
+  timings?: StageTimings;
+  /** False when the leak check could not inspect the output (scanned source).
+   *  An empty leak list must NOT be read as "clean" in that case. */
+  verified?: boolean;
+}
+
+export interface ApplyRedactionResult {
+  download_token: string | null;
+  download_name: string | null;
+  applied_span_count: number;
+  leaked_pii_count: number;
+  warning?: string | null;
+  elapsed?: number;
+  timings?: StageTimings;
+  verified?: boolean;
 }
 
 export interface AppUpdateInfo {
@@ -72,6 +110,10 @@ export interface Health {
   downloading: boolean;
   download_pct: number;
   error: string | null;
+  /** Detected inference device: cpu / cuda / mps. */
+  device?: string;
+  /** Human-readable device label ("mps (Apple Silicon GPU via Metal)"). */
+  device_label?: string;
 }
 
 export async function getHealth(): Promise<Health> {
@@ -86,13 +128,14 @@ export async function shutdown(): Promise<void> {
 
 export async function redactText(
   text: string,
+  mode: Mode = "balanced",
   signal?: AbortSignal,
 ): Promise<RedactTextResult> {
   return jsonOrThrow(
     await fetch("/api/redact", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, mode }),
       signal,
     }),
   );
@@ -100,12 +143,35 @@ export async function redactText(
 
 export async function redactFile(
   file: File,
+  mode: Mode = "balanced",
   signal?: AbortSignal,
 ): Promise<RedactFileResult> {
   const form = new FormData();
   form.append("file", file);
+  form.append("mode", mode);
   return jsonOrThrow(
     await fetch("/api/redact-file", { method: "POST", body: form, signal }),
+  );
+}
+
+/** Re-apply the user's curated span list without running detection again.
+ *  Used by the human-in-the-loop review flow: the caller re-uploads the
+ *  same file plus the spans that survived their review, and the server
+ *  produces a fresh redacted download that reflects exactly those spans. */
+export async function applyRedaction(
+  file: File,
+  spans: DetectedSpan[],
+  signal?: AbortSignal,
+): Promise<ApplyRedactionResult> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("spans_json", JSON.stringify(spans));
+  return jsonOrThrow(
+    await fetch("/api/redact-file/apply", {
+      method: "POST",
+      body: form,
+      signal,
+    }),
   );
 }
 
@@ -117,6 +183,77 @@ export function isAbort(e: unknown): boolean {
 export function downloadUrl(token: string): string {
   return `/api/download/${token}`;
 }
+
+// --- Custom dictionary -----------------------------------------------------
+
+export type MatchMode = "smart" | "exact" | "regex";
+
+export interface DictEntry {
+  id: string;
+  term: string;
+  label: string;
+  match: MatchMode;
+  enabled: boolean;
+}
+
+export interface DictionaryInfo {
+  terms: DictEntry[];
+  labels: string[];
+  match_modes: MatchMode[];
+}
+
+export interface ImportResult {
+  added: number;
+  skipped: number;
+  invalid: number;
+}
+
+export async function getDictionary(): Promise<DictionaryInfo> {
+  return jsonOrThrow(await fetch("/api/dictionary"));
+}
+
+export async function addDictEntry(
+  entry: Omit<DictEntry, "id">,
+): Promise<DictEntry> {
+  return jsonOrThrow(
+    await fetch("/api/dictionary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entry),
+    }),
+  );
+}
+
+export async function updateDictEntry(
+  id: string,
+  patch: Partial<Omit<DictEntry, "id">>,
+): Promise<DictEntry> {
+  return jsonOrThrow(
+    await fetch(`/api/dictionary/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+  );
+}
+
+export async function deleteDictEntry(id: string): Promise<void> {
+  await jsonOrThrow(await fetch(`/api/dictionary/${id}`, { method: "DELETE" }));
+}
+
+export async function importDictionary(
+  terms: unknown[],
+): Promise<ImportResult> {
+  return jsonOrThrow(
+    await fetch("/api/dictionary/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ terms }),
+    }),
+  );
+}
+
+export const DICTIONARY_EXPORT_URL = "/api/dictionary/export";
 
 export async function getUpdates(): Promise<UpdatesInfo> {
   return jsonOrThrow(await fetch("/api/updates"));

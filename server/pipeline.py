@@ -22,12 +22,13 @@ less-specific label (e.g. ``account_number``), so we prefer the specific one.
 from __future__ import annotations
 
 import unicodedata
+from bisect import bisect_right
 from dataclasses import dataclass
 
 from opf._api import RedactionResult
 from opf._core.runtime import DetectedSpan
 
-from server import ner_es, recognizers_es
+from server import custom_dict, ner_es, recognizers_es
 
 
 # Human-readable Spanish labels used in placeholders and DetectedSpan.label.
@@ -51,6 +52,7 @@ _FRIENDLY_LABEL: dict[str, str] = {
     "ES_LICENSE_PLATE": "MATRICULA",
     "ES_CADASTRAL_REF": "CATASTRO",
     "ES_CREDIT_CARD": "TARJETA",
+    "ES_REGISTRY_REF": "REGISTRO",
     # Spanish NER (spaCy) — grouped with opf's equivalents for consistent
     # pseudonymization: a person detected by NER and by opf gets the same token.
     "ES_NER_PER": "NOMBRE",
@@ -102,15 +104,25 @@ def _resolve_overlaps(spans: list[_RawSpan]) -> list[_RawSpan]:
             s.start,
         )
 
+    # Kept spans are disjoint by construction and held sorted by start, so a
+    # candidate can only clash with its two neighbours: the last span starting
+    # at or before it, and the first one starting after. Binary-searching those
+    # makes this O(n log n) instead of the O(n²) scan-everything version — on a
+    # 232-page document that's ~4k spans, where the quadratic form cost tens of
+    # seconds.
     kept: list[_RawSpan] = []
+    starts: list[int] = []
     for span in sorted(spans, key=priority):
-        clashes = any(
-            not (span.end <= k.start or span.start >= k.end)
-            for k in kept
-        )
-        if not clashes:
-            kept.append(span)
-    kept.sort(key=lambda s: s.start)
+        idx = bisect_right(starts, span.start) - 1
+        clash = False
+        if idx >= 0 and kept[idx].end > span.start:
+            clash = True
+        if not clash and idx + 1 < len(kept) and kept[idx + 1].start < span.end:
+            clash = True
+        if not clash:
+            insert_at = idx + 1
+            kept.insert(insert_at, span)
+            starts.insert(insert_at, span.start)
     return kept
 
 
@@ -160,15 +172,64 @@ _OPF_STATISTICAL_LABELS = frozenset({
     "private_person", "private_address", "private_date",
 })
 
+# Operating modes: how strictly the false-positive filter runs, per source.
+# The Viterbi preset (set separately in server.inference) already influences
+# how many raw spans opf emits at each mode; this table decides which of those
+# survive the filter.
+#
+#     mode          opf strict?     opf filter applied?     ner strict?
+#     conservative  True            True                    True
+#     balanced      False           True                    True (default)
+#     aggressive    False           False                   False
+#
+# "strict=True" applies the shape heuristics (all-caps ≥3, no capitalized
+# token, leading preposition) as well as the source-independent rejections.
+# "strict=False" drops the shape heuristics but keeps public-phrase / filename
+# / garbage / single-token stoplist rejections.
+_MODE_TO_OPF_FILTER: dict[str, tuple[bool, bool]] = {
+    "conservative": (True, True),   # (apply_filter, strict)
+    "balanced":     (True, False),
+    "aggressive":   (False, False),
+}
+_MODE_TO_NER_STRICT: dict[str, bool] = {
+    "conservative": True,
+    "balanced":     True,
+    "aggressive":   False,
+}
+_VALID_MODES = frozenset(_MODE_TO_OPF_FILTER)
+DEFAULT_MODE = "balanced"
 
-def _opf_raw_spans(opf_spans: tuple) -> list[_RawSpan]:
+
+def _is_numeric_reference(text: str) -> bool:
+    """True when ``text`` looks like a law-article / page / section number.
+
+    Purely digits + separator punctuation (``. , -``) with no letters at all
+    → almost always a reference (``753.1``, ``750``, ``1.234-5``), not an
+    address. Slashes ``/`` are intentionally excluded so dates like
+    ``31/10/2025`` are NOT caught by this rule (opf tags dates separately).
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    return all(c.isdigit() or c in ".,-" for c in stripped) and any(
+        c.isdigit() for c in stripped
+    )
+
+
+def _opf_raw_spans(opf_spans: tuple, mode: str) -> list[_RawSpan]:
+    apply_filter, strict = _MODE_TO_OPF_FILTER[mode]
     result: list[_RawSpan] = []
     for s in opf_spans:
         text, start, end = s.text, s.start, s.end
-        if s.label in _OPF_STATISTICAL_LABELS:
+        # Numeric-reference guard applies to *addresses* only, regardless of
+        # mode: an "address" that is purely digits+dots (e.g. article 753.1
+        # LEC) is a reference to a law, never a physical address.
+        if s.label == "private_address" and _is_numeric_reference(text):
+            continue
+        if apply_filter and s.label in _OPF_STATISTICAL_LABELS:
             # Check on original first (catches public-phrase / filename /
             # single-token stoplist before trimming can distort the match).
-            if ner_es.is_probably_false_positive(text, strict=False):
+            if ner_es.is_probably_false_positive(text, strict=strict, label=s.label):
                 continue
             trimmed, dropped = ner_es.trim_trailing_role_words(text)
             if dropped:
@@ -176,7 +237,7 @@ def _opf_raw_spans(opf_spans: tuple) -> list[_RawSpan]:
                 end -= dropped
                 if end <= start:
                     continue
-                if ner_es.is_probably_false_positive(text, strict=False):
+                if ner_es.is_probably_false_positive(text, strict=strict, label=s.label):
                     continue
         result.append(_RawSpan(
             start=start, end=end, label=s.label,
@@ -186,36 +247,56 @@ def _opf_raw_spans(opf_spans: tuple) -> list[_RawSpan]:
 
 
 def _deterministic_raw_spans(text: str) -> list[_RawSpan]:
+    # Validated Spanish recognizers plus the user's custom dictionary. Both are
+    # treated as "det": they win overlaps against the statistical models and
+    # bypass the false-positive filter, because each is an explicit, checkable
+    # assertion that the span is PII (a control digit validated, or the user
+    # typed the term into the dictionary).
+    recognitions = recognizers_es.analyze(text) + custom_dict.analyze(text)
     return [
         _RawSpan(
             start=r.start, end=r.end, label=r.entity_type,
             text=r.text, source="det", score=r.score,
         )
-        for r in recognizers_es.analyze(text)
+        for r in recognitions
     ]
 
 
-def _ner_raw_spans(text: str) -> list[_RawSpan]:
+def _ner_raw_spans(text: str, mode: str) -> list[_RawSpan]:
     """Statistical spaCy Spanish NER; empty if the model isn't installed."""
+    strict = _MODE_TO_NER_STRICT[mode]
     return [
         _RawSpan(
             start=r.start, end=r.end, label=r.entity_type,
             text=r.text, source="ner", score=r.score,
         )
-        for r in ner_es.analyze(text)
+        for r in ner_es.analyze(text, strict=strict)
     ]
 
 
-def merge_and_redact(text: str, opf_result: RedactionResult) -> RedactionResult:
+def merge_and_redact(
+    text: str,
+    opf_result: RedactionResult,
+    *,
+    mode: str = DEFAULT_MODE,
+) -> RedactionResult:
     """Fuse opf + deterministic + NER spans and rebuild a ``RedactionResult``.
+
+    ``mode`` selects the false-positive filter strictness per source. See
+    :data:`_MODE_TO_OPF_FILTER` for the mapping. The Viterbi calibration used
+    on the opf side is chosen upstream in :func:`server.inference.redact`.
 
     Exposed as a pure function so tests can inject a stub ``opf_result`` and
     (via monkey-patching ``ner_es.analyze``) a stub NER result too.
     """
+    if mode not in _VALID_MODES:
+        raise ValueError(
+            f"Unknown mode {mode!r}. Expected one of {sorted(_VALID_MODES)}."
+        )
     combined = (
-        _opf_raw_spans(opf_result.detected_spans)
+        _opf_raw_spans(opf_result.detected_spans, mode)
         + _deterministic_raw_spans(text)
-        + _ner_raw_spans(text)
+        + _ner_raw_spans(text, mode)
     )
     merged = _resolve_overlaps(combined)
     tokens = _assign_placeholders(merged)
@@ -238,6 +319,11 @@ def merge_and_redact(text: str, opf_result: RedactionResult) -> RedactionResult:
     )
 
 
-def redact(model, text: str) -> RedactionResult:
-    """Full pipeline: run opf on ``text``, merge with deterministic hits."""
-    return merge_and_redact(text, model.redact(text))
+def redact(model, text: str, *, mode: str = DEFAULT_MODE) -> RedactionResult:
+    """Full pipeline: run opf on ``text``, merge with deterministic hits.
+
+    ``mode`` picks the operating point (see :func:`merge_and_redact`) and is
+    also expected to have been applied to ``model``'s Viterbi decoder upstream
+    (see :func:`server.inference.redact`).
+    """
+    return merge_and_redact(text, model.redact(text), mode=mode)

@@ -367,3 +367,128 @@ code {
   padding: 10px 14px;
   color: var(--muted);
 }
+
+/* Mode selector (fase 5 — precision/recall preset) */
+.mode-selector {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px 12px;
+  margin: 8px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.mode-selector legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.mode-selector .chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.mode-selector .chip.selected {
+  outline: 2px solid var(--accent, #3aa757);
+}
+
+.mode-selector input[type="radio"] {
+  margin: 0;
+}
+
+/* Warning banner (fase 4 anti-leak + fase 5 mode confirmation) */
+.result .warning {
+  background: rgba(255, 200, 0, 0.12);
+  border: 1px solid rgba(255, 200, 0, 0.5);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--fg);
+}
+
+/* --- Dictionary tab (custom terms) ------------------------------------- */
+.dict-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin: 12px 0;
+}
+.dict-form .col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dict-form .col.grow {
+  flex: 1 1 220px;
+}
+.dict-form input,
+.dict-form select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 0.9rem;
+}
+.dict-toolbar {
+  gap: 8px;
+  align-items: center;
+  margin: 6px 0 4px;
+}
+.dict-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 0.9rem;
+}
+.dict-table th,
+.dict-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.dict-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+.dict-table td.mono,
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.dict-table tr.disabled-row td {
+  opacity: 0.45;
+}
+.tag {
+  display: inline-block;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  color: var(--primary);
+}
+.btn.small {
+  padding: 4px 10px;
+  font-size: 0.82rem;
+}
+.btn.danger {
+  border-color: var(--error);
+  color: var(--error);
+}
+.btn.danger:hover {
+  background: rgba(255, 107, 107, 0.12);
+}
+.notice {
+  background: rgba(79, 140, 255, 0.12);
+  border: 1px solid rgba(79, 140, 255, 0.5);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: var(--text);
+}

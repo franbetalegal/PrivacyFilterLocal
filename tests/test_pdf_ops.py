@@ -219,6 +219,41 @@ def test_parallel_and_sequential_extraction_match(tmp_path: Path, monkeypatch):
             assert abs(a.rect.y0 - b.rect.y0) < 0.01
 
 
+def test_extract_with_map_uses_cache(tmp_path: Path):
+    """A second extract on the same file must skip work via the cache."""
+    pdf = _write_pdf(tmp_path, ["Hello world"])
+    pdf_ops.clear_extract_cache()
+    first = pdf_ops.extract_with_map(str(pdf))
+    # Monkey the underlying _extract_page function to a bomb; if the cache is
+    # skipped, the second call would trip it. We do this via monkeypatch-style
+    # attribute set/restore so the test doesn't need a pytest fixture here.
+    import server.pdf_ops as mod
+    original = mod._extract_page
+    mod._extract_page = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("cache miss"))
+    try:
+        second = pdf_ops.extract_with_map(str(pdf))
+    finally:
+        mod._extract_page = original
+        pdf_ops.clear_extract_cache()
+    assert first is not None and second is not None
+    assert first[0] == second[0]
+
+
+def test_extract_cache_invalidated_on_mtime_change(tmp_path: Path):
+    """Rewriting the file (same path, new mtime) must miss the cache."""
+    import time
+    pdf = _write_pdf(tmp_path, ["Uno"])
+    pdf_ops.clear_extract_cache()
+    a = pdf_ops.extract_with_map(str(pdf))
+    time.sleep(0.05)  # coarse macOS mtime resolution
+    _write_pdf(tmp_path, ["Dos"], filename="in.pdf")   # overwrites
+    b = pdf_ops.extract_with_map(str(pdf))
+    pdf_ops.clear_extract_cache()
+    assert a is not None and b is not None
+    assert "Uno" in a[0]
+    assert "Dos" in b[0]
+
+
 def test_parallel_extraction_offsets_still_redact(tmp_path: Path, monkeypatch):
     """After parallel extraction, offset-based redaction must still work."""
     pages = [f"Pagina {i} con DNI 12345678Z incluida." for i in range(4)]
@@ -238,3 +273,143 @@ def test_parallel_extraction_offsets_still_redact(tmp_path: Path, monkeypatch):
     out = tmp_path / "out.pdf"
     pdf_ops.redact_by_offsets(str(pdf), str(out), spans)
     assert "12345678Z" not in pdf_ops.extract_text(str(out))
+
+
+# --- OCR raster tuning -----------------------------------------------------
+
+
+def test_effective_dpi_caps_at_native_resolution(tmp_path: Path, monkeypatch):
+    """Never upsample: a 150-dpi scan must not be rendered at 200 dpi.
+
+    Rasterising above the embedded image's own resolution costs pixels and
+    interpolates no detail, and measurably regressed identifier recall on
+    low-resolution sources.
+    """
+    Image = pytest.importorskip("PIL.Image")
+    # A 595x842 pt page carrying a ~150 dpi image (1240x1754 px).
+    img = Image.new("L", (1240, 1754), 255)
+    png = tmp_path / "scan.png"
+    img.save(png)
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_image(page.rect, filename=str(png))
+    p = tmp_path / "scan.pdf"
+    doc.save(str(p)); doc.close()
+
+    monkeypatch.setenv("PF_OCR_DPI", "200")
+    monkeypatch.delenv("PF_OCR_CLAMP_NATIVE", raising=False)
+    reopened = fitz.open(str(p))
+    try:
+        native = pdf_ops._native_dpi(reopened[0])
+        eff = pdf_ops._effective_dpi(reopened[0])
+    finally:
+        reopened.close()
+    assert 140 <= native <= 160, native
+    assert eff <= 200 and eff <= native + 1, (eff, native)
+
+
+def test_effective_dpi_uses_ceiling_when_page_has_no_image(tmp_path: Path, monkeypatch):
+    pdf = _write_pdf(tmp_path, ["Solo texto, sin imagen."])
+    monkeypatch.setenv("PF_OCR_DPI", "200")
+    monkeypatch.delenv("PF_OCR_CLAMP_NATIVE", raising=False)
+    doc = fitz.open(str(pdf))
+    try:
+        assert pdf_ops._native_dpi(doc[0]) == 0.0
+        assert pdf_ops._effective_dpi(doc[0]) == 200
+    finally:
+        doc.close()
+
+
+def test_effective_dpi_never_below_floor(tmp_path: Path, monkeypatch):
+    """A very coarse scan is still rendered at the floor, not lower."""
+    Image = pytest.importorskip("PIL.Image")
+    img = Image.new("L", (300, 420), 255)          # ~36 dpi on an A4 page
+    png = tmp_path / "coarse.png"
+    img.save(png)
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_image(page.rect, filename=str(png))
+    p = tmp_path / "coarse.pdf"
+    doc.save(str(p)); doc.close()
+    monkeypatch.setenv("PF_OCR_DPI", "200")
+    reopened = fitz.open(str(p))
+    try:
+        assert pdf_ops._effective_dpi(reopened[0]) == pdf_ops._MIN_OCR_DPI
+    finally:
+        reopened.close()
+
+
+def test_clamp_can_be_disabled(tmp_path: Path, monkeypatch):
+    Image = pytest.importorskip("PIL.Image")
+    img = Image.new("L", (1240, 1754), 255)
+    png = tmp_path / "s.png"; img.save(png)
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_image(page.rect, filename=str(png))
+    p = tmp_path / "s.pdf"; doc.save(str(p)); doc.close()
+    monkeypatch.setenv("PF_OCR_DPI", "300")
+    monkeypatch.setenv("PF_OCR_CLAMP_NATIVE", "0")
+    reopened = fitz.open(str(p))
+    try:
+        assert pdf_ops._effective_dpi(reopened[0]) == 300
+    finally:
+        reopened.close()
+
+
+# --- Output size -----------------------------------------------------------
+
+
+def test_redacted_output_is_compressed(tmp_path: Path):
+    """apply_redactions re-encodes pages; without deflate the output exploded.
+
+    Measured on a 24-page scan: 8.3 MB in -> 286.9 MB out (~12 MB/page, i.e.
+    ~2.8 GB for a 232-page file). This asserts the saved file stays in the same
+    order of magnitude as its input rather than ballooning.
+    """
+    pdf = _write_pdf(tmp_path, ["Nombre: Juan Garcia Perez, DNI 12345678Z"])
+    text, _ = pdf_ops.extract_with_map(str(pdf))
+    start = text.index("Juan Garcia Perez")
+    out = tmp_path / "out.pdf"
+    pdf_ops.redact_by_offsets(
+        str(pdf), str(out),
+        [_Span(start, start + 17, "Juan Garcia Perez", "[NOMBRE_1]")],
+    )
+    assert out.stat().st_size < pdf.stat().st_size * 8
+
+
+# --- Extraction cache keyed on content, not path ---------------------------
+
+
+def test_cache_hits_for_identical_content_at_a_different_path(tmp_path: Path):
+    """The regenerate endpoint re-uploads the same bytes to a new temp path.
+
+    With a path-keyed cache that always missed and the whole document was OCR'd
+    a second time (~257 s on a 232-page scan).
+    """
+    import shutil
+    pdf = _write_pdf(tmp_path, ["Contenido identico"], filename="a.pdf")
+    copy = tmp_path / "b.pdf"
+    shutil.copyfile(pdf, copy)
+    pdf_ops.clear_extract_cache()
+    first = pdf_ops.extract_with_map(str(pdf))
+    import server.pdf_ops as mod
+    original = mod._extract_page
+    mod._extract_page = lambda *a, **kw: (_ for _ in ()).throw(
+        RuntimeError("cache miss on identical content"))
+    try:
+        second = pdf_ops.extract_with_map(str(copy))
+    finally:
+        mod._extract_page = original
+        pdf_ops.clear_extract_cache()
+    assert first is not None and second is not None
+    assert first[0] == second[0]
+
+
+def test_cache_misses_for_different_content(tmp_path: Path):
+    pdf_ops.clear_extract_cache()
+    a = _write_pdf(tmp_path, ["Uno"], filename="x.pdf")
+    ra = pdf_ops.extract_with_map(str(a))
+    b = _write_pdf(tmp_path, ["Dos"], filename="y.pdf")
+    rb = pdf_ops.extract_with_map(str(b))
+    pdf_ops.clear_extract_cache()
+    assert "Uno" in ra[0] and "Dos" in rb[0]

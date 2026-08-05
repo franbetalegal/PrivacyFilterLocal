@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { installModelUpdate } from "../api";
+import { useEffect, useState } from "react";
+import { getHealth, installModelUpdate, type Health } from "../api";
 
 const CATEGORIES: [string, string][] = [
   ["PERSON", "Person names"],
@@ -15,6 +15,11 @@ const CATEGORIES: [string, string][] = [
 export default function InfoTab() {
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [health, setHealth] = useState<Health | null>(null);
+
+  useEffect(() => {
+    getHealth().then(setHealth).catch(() => setHealth(null));
+  }, []);
 
   async function onUpdateModel() {
     setBusy(true);
@@ -66,6 +71,18 @@ export default function InfoTab() {
       </ul>
 
       <h2>Model</h2>
+      {health?.device_label && (
+        <p>
+          Running on:{" "}
+          <code>{health.device_label}</code>
+          {health.device === "cpu" && (
+            <span className="muted">
+              {" "}— add a CUDA GPU or run this on an Apple Silicon Mac to enable
+              hardware acceleration.
+            </span>
+          )}
+        </p>
+      )}
       <button className="btn" onClick={onUpdateModel} disabled={busy}>
         {busy ? "Working…" : "Update model"}
       </button>

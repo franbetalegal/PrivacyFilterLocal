@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { redactText, getHealth, isAbort, type DetectedSpan } from "../api";
+import {
+  redactText,
+  getHealth,
+  isAbort,
+  type DetectedSpan,
+  type Mode,
+} from "../api";
 import SpanList from "../components/SpanList";
+import ModeSelector from "../components/ModeSelector";
 import Processing from "../components/Processing";
 
 const FIRST_RUN_HINT =
@@ -21,6 +28,7 @@ export default function TextTab() {
   const [error, setError] = useState<string | null>(null);
   const [ran, setRan] = useState(false);
   const [modelReady, setModelReady] = useState(true);
+  const [mode, setMode] = useState<Mode>("balanced");
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -43,7 +51,7 @@ export default function TextTab() {
     setLoading(true);
     setError(null);
     try {
-      const res = await redactText(text, controller.signal);
+      const res = await redactText(text, mode, controller.signal);
       setRedacted(res.redacted_text);
       setSpans(res.detected_spans);
       setElapsed(res.elapsed);
@@ -80,6 +88,8 @@ export default function TextTab() {
           <textarea id="output" rows={6} value={redacted} readOnly />
         </div>
       </div>
+
+      <ModeSelector value={mode} onChange={setMode} disabled={loading} />
 
       <div className="row">
         <button className="btn primary" onClick={onDetect} disabled={loading}>

@@ -226,6 +226,26 @@ _RECOGNIZERS: tuple[_Recognizer, ...] = (
         validator=None,
         context=("catastro", "catastral", "referencia catastral"),
     ),
+    _Recognizer(
+        entity_type="ES_REGISTRY_REF",
+        # Land/company registry locators: "Tomo 4097", "Libro 916",
+        # "Folio 64", "Hoja 286", "Inscripción 4", "Finca Registral 817".
+        #
+        # These need their own deterministic recognizer precisely *because*
+        # "tomo"/"libro"/"folio"/"hoja" live in the boilerplate lexicon used to
+        # reject NER noise — without this, the filter would drop them, which
+        # contradicts the policy of redacting every registry identifier.
+        # Deterministic matches bypass that filter.
+        pattern=_re(
+            r"\b(?:[Tt]omo|[Ll]ibro|[Ll]libre|[Ff]olio|[Ff]oli|[Hh]oja|"
+            r"[Ii]nscripci[oó]n|[Ii]nscripci[oó]|[Ff]inca(?:\s+[Rr]egistral)?|"
+            r"[Ss]ecci[oó]n)\s*n?[.ºo°]?\s*\d{1,6}\b"
+        ),
+        score=0.85,
+        validator=None,
+        context=("registro", "registral", "propiedad", "mercantil",
+                 "inscripción", "inscripcion", "finca"),
+    ),
 )
 
 

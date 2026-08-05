@@ -22,8 +22,31 @@ _model = None
 _model_lock = threading.Lock()
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="opf-infer")
 
+# Viterbi calibration presets — each file shifts the CRF decoder's
+# transition biases so opf emits fewer/tighter spans (conservative) or more/
+# broader spans (aggressive). See server/viterbi_presets/*.json.
+_PRESETS_DIR = Path(__file__).resolve().parent / "viterbi_presets"
+_MODE_TO_CALIBRATION: dict[str, Path] = {
+    "conservative": _PRESETS_DIR / "conservative.json",
+    "balanced":     _PRESETS_DIR / "balanced.json",
+    "aggressive":   _PRESETS_DIR / "aggressive.json",
+}
+DEFAULT_MODE = "balanced"
+
+
+def calibration_path_for(mode: str) -> Optional[str]:
+    """Return the absolute path to the Viterbi calibration file for ``mode``.
+
+    ``None`` if the mode is unknown or the file is missing on disk (which
+    would fall back to the checkpoint's built-in calibration).
+    """
+    path = _MODE_TO_CALIBRATION.get(mode)
+    if path is None or not path.is_file():
+        return None
+    return str(path)
+
 # Lightweight state for the /api/health endpoint.
-_state = {"loaded": False, "loading": False}
+_state = {"loaded": False, "loading": False, "device": None}
 
 # First-run model download progress (surfaced in the web UI instead of a console).
 _dl_state = {"downloading": False, "pct": 0, "error": None}
@@ -103,13 +126,57 @@ def get_model():
                 )
 
             _configure_torch_threads()
-            logger.info("Loading Privacy Filter model...")
-            _model = OPF(device="cpu")
-            logger.info("Model loaded")
+            from server.device import detect_device, describe
+            device = detect_device()
+            # opf's MoE defaults to Triton kernels on any non-CPU device, but
+            # Triton is CUDA-only *and* an optional dependency. Without this,
+            # a CUDA box with no triton installed — or any Apple Silicon Mac —
+            # dies at the first forward pass with ModuleNotFoundError.
+            # See privacy-filter/opf/_model/model.py:754.
+            triton_ok = device == "cuda" and _triton_available()
+            if device != "cpu" and not triton_ok:
+                os.environ.setdefault("OPF_MOE_TRITON", "0")
+                if device == "cuda":
+                    logger.warning(
+                        "CUDA detected but 'triton' is not installed, so opf's "
+                        "fast GPU MoE kernels are unavailable. Falling back to "
+                        "the portable MoE path. Install triton for full GPU "
+                        "throughput."
+                    )
+            # Swap in the expert-grouped MoE unless Triton is doing the job.
+            # It self-calibrates per host (see server/moe_fast.py), so this is
+            # correct on ARM, Intel and AMD rather than tuned for one of them.
+            if not triton_ok:
+                from server import moe_fast
+                moe_fast.install()
+            logger.info("Loading Privacy Filter model on %s ...", describe(device))
+            try:
+                _model = OPF(device=device)
+            except Exception as exc:  # noqa: BLE001
+                if device != "cpu":
+                    logger.warning(
+                        "Model load failed on %s (%s); falling back to CPU.",
+                        device, exc,
+                    )
+                    device = "cpu"
+                    _model = OPF(device="cpu")
+                else:
+                    raise
+            _state["device"] = device
+            logger.info("Model loaded on %s", describe(device))
             _state["loaded"] = True
             return _model
         finally:
             _state["loading"] = False
+
+
+def _triton_available() -> bool:
+    """True if opf's Triton MoE kernels can actually be imported."""
+    try:
+        import triton  # noqa: F401
+    except Exception:  # noqa: BLE001 — a broken install must not be fatal
+        return False
+    return True
 
 
 def _configure_torch_threads() -> None:
@@ -126,7 +193,14 @@ def _configure_torch_threads() -> None:
     try:
         import torch
 
-        torch.set_num_threads(concurrency.worker_count())
+        target = concurrency.worker_count()
+        torch.set_num_threads(target)
+        actual = torch.get_num_threads()
+        inter = torch.get_num_interop_threads()
+        logger.info(
+            "torch threads: requested=%d intra=%d interop=%d",
+            target, actual, inter,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.debug("Could not set torch thread count: %s", exc)
 
@@ -177,33 +251,137 @@ def start_background_download() -> None:
 
 def status() -> dict:
     """Return a snapshot of the model/download state for the health endpoint."""
+    from server.device import describe, detect_device
+
+    device = _state["device"] or detect_device()
     return {
         "model_loaded": _state["loaded"],
         "loading": _state["loading"],
         "downloading": _dl_state["downloading"],
         "download_pct": _dl_state["pct"],
         "error": _dl_state["error"],
+        "device": device,
+        "device_label": describe(device),
     }
 
 
-def _redact_sync(text: str):
+# Chunking thresholds. Empirical measurement (see docs) shows opf's forward
+# pass is *linear* in token count on CPU — chunking a 5k-token doc into 8
+# pieces gives no speedup and adds ~5% overhead from the extra overlap
+# tokens. So the default threshold is high enough that typical legal
+# documents (up to ~15k tokens) take the single-pass route. Chunking still
+# activates automatically for the very-long-document tail: it keeps peak
+# memory bounded and stays within opf's 128k-token context. Both knobs are
+# env-var tunable for benchmarking.
+_CHUNK_CHARS = int(os.environ.get("PF_OPF_CHUNK_CHARS", "50000"))
+_CHUNK_OVERLAP = int(os.environ.get("PF_OPF_CHUNK_OVERLAP", "1500"))
+
+
+def _opf_redact_chunked(model, text: str, decode_options):
+    """Run ``opf.redact`` on overlapping chunks and merge the spans.
+
+    Returns a ``RedactionResult`` whose ``detected_spans`` are absolute-offset
+    into the original ``text`` and deduplicated across chunk overlaps.
+    """
+    import time as _t
+    from opf._api import RedactionResult
+    from opf._core.runtime import DetectedSpan
+
+    from server.chunking import split_with_overlap
+
+    chunks = split_with_overlap(text, _CHUNK_CHARS, _CHUNK_OVERLAP)
+    if len(chunks) <= 1:
+        return model.redact(text, decode=decode_options)
+
+    merged: list[DetectedSpan] = []
+    seen: set[tuple[int, int, str]] = set()
+    warning: str | None = None
+    per_chunk_times: list[float] = []
+    for ch in chunks:
+        t = _t.time()
+        r = model.redact(ch.text, decode=decode_options)
+        per_chunk_times.append(_t.time() - t)
+        if r.warning and warning is None:
+            warning = r.warning
+        for span in r.detected_spans:
+            abs_start = ch.offset + span.start
+            abs_end = ch.offset + span.end
+            key = (abs_start, abs_end, span.label)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(DetectedSpan(
+                label=span.label,
+                start=abs_start,
+                end=abs_end,
+                text=span.text,
+                placeholder=span.placeholder,
+            ))
+    merged.sort(key=lambda s: (s.start, s.end))
+    logger.info(
+        "opf chunking: %d chunks, per-chunk secs=[%s]",
+        len(chunks),
+        ", ".join(f"{t:.2f}" for t in per_chunk_times),
+    )
+    by_label: dict[str, int] = {}
+    for s in merged:
+        by_label[s.label] = by_label.get(s.label, 0) + 1
+    summary = {
+        "span_count": len(merged),
+        "by_label": dict(sorted(by_label.items())),
+    }
+    return RedactionResult(
+        schema_version=1,
+        summary=summary,
+        text=text,
+        detected_spans=tuple(merged),
+        redacted_text=text,  # pipeline will rebuild the redacted text
+        warning=warning,
+    )
+
+
+def _redact_sync(text: str, mode: str = DEFAULT_MODE):
     """Blocking redaction used inside the inference thread pool.
 
-    Delegates to :mod:`server.pipeline`, which combines the opf model with the
-    Spanish deterministic recognizers and applies consistent pseudonymization.
+    Runs opf with the Viterbi calibration selected by ``mode`` — chunked over
+    the input for long texts, single-pass for short ones — then delegates to
+    :mod:`server.pipeline` for the deterministic + NER layers and the
+    consistent pseudonymisation.
     """
+    import time as _t
+    from opf._api import DecodeOptions
     from server import pipeline
 
-    return pipeline.redact(get_model(), text)
+    model = get_model()
+    calib = calibration_path_for(mode)
+    decode_options = (
+        DecodeOptions(viterbi_calibration_path=calib) if calib is not None else None
+    )
+
+    t0 = _t.time()
+    opf_result = _opf_redact_chunked(model, text, decode_options)
+    t_opf = _t.time() - t0
+    t1 = _t.time()
+    result = pipeline.merge_and_redact(text, opf_result, mode=mode)
+    t_pipeline = _t.time() - t1
+    logger.info(
+        "TIMING opf.redact=%.2fs pipeline.merge=%.2fs text=%d chars mode=%s",
+        t_opf, t_pipeline, len(text), mode,
+    )
+    return result
 
 
-async def redact(text: str):
+async def redact(text: str, mode: str = DEFAULT_MODE):
     """Run redaction off the event loop, serialized via the single-worker pool.
 
-    Returns the ``RedactionResult`` from ``OPF.redact``.
+    ``mode`` picks the precision/recall operating point (``conservative``,
+    ``balanced``, ``aggressive``); unknown values fall back to ``balanced``.
+    Returns the ``RedactionResult`` from ``OPF.redact`` (post-pipeline).
     """
+    if mode not in _MODE_TO_CALIBRATION:
+        mode = DEFAULT_MODE
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_executor, _redact_sync, text)
+    return await loop.run_in_executor(_executor, _redact_sync, text, mode)
 
 
 async def run_blocking(func: Callable, *args):

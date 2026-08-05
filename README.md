@@ -180,6 +180,55 @@ they're effectively optional but strongly recommended for Spanish/Catalan docs.
 
 ## Performance & tuning
 
+### Hardware support
+
+The app picks its inference path from what the host actually offers, so the
+same build runs correctly on Apple Silicon, Intel, AMD and NVIDIA:
+
+| Host | Device | MoE path |
+|------|--------|----------|
+| NVIDIA GPU + CUDA torch + `triton` | `cuda` | opf's Triton kernels (fastest) |
+| NVIDIA GPU without `triton` | `cuda` | portable path, with a warning |
+| Intel / AMD CPU | `cpu` | **measured on first run** — see below |
+| Apple Silicon | `cpu` | **measured on first run** |
+| Apple Silicon, `PF_DEVICE=mps` | `mps` | portable path (slower here; opt-in) |
+
+**Why the MoE path is measured, not assumed.** opf's CPU fallback copies each
+token's expert weights and casts them to fp32. On Apple Silicon, where PyTorch
+has no fast bf16 GEMM, replacing that with an expert-grouped loop is ~10×
+faster in that block and ~8× end-to-end. But a recent Intel Xeon
+(AVX-512-BF16, or AMX from Sapphire Rapids) has native bf16 matmul and may be
+faster on the *upstream* path. So `server/moe_fast.py` benchmarks both at
+startup (sub-second), keeps the winner, and caches the verdict under the
+checkpoint keyed by platform + CPU + torch version. Override with
+`PF_FAST_MOE=1|0`, re-measure with `PF_MOE_RECALIBRATE=1`.
+
+MPS is available but never auto-selected: measured on an M1, a 10-page document
+took ~145 s on MPS versus ~90 s on unoptimised CPU, because the Triton kernels
+are CUDA-only and Metal adds kernel-launch overhead on top of the same fallback.
+
+### Where the time goes
+
+Measured per stage on Apple Silicon (M1, 6 worker cores). Model inference
+dominates and is **memory-bandwidth-bound**, not compute-bound — verified by
+four independent experiments: more torch threads plateau at ~1.4× and then
+regress, converting the model to fp32 is 0.76×, a grouped `bmm` in the MoE is
+0.7×, and 2–4 worker *processes* are 0.45×/0.32×. Around 1 800 chars/s is this
+machine's ceiling; a faster result needs a GPU, not different code.
+
+| Stage | Share | Notes |
+|-------|-------|-------|
+| opf inference | ~90 % | bandwidth-bound; scales with the machine, not with cores |
+| spaCy NER | ~5 % | per-paragraph, language-routed |
+| merge + pseudonymisation | ~4 % | O(n log n) overlap sweep |
+| deterministic recognizers | <1 % | pure regex |
+| PDF OCR (scanned only) | separate | parallel across page ranges |
+
+For a large scanned file, OCR and inference are the two costs that matter;
+both are reported per stage in `logs/privacy-filter.log` as `TIMING` lines.
+
+### Core budget
+
 CPU-bound work respects a shared budget of
 `cpu_count − PF_RESERVED_CORES` (minimum 1), so a job never starves the host:
 
