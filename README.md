@@ -2,7 +2,8 @@
 
 100% local PII detection and redaction, powered by OpenAI's Privacy Filter model.
 React (Vite) web interface served by a FastAPI backend — packaged as ready-to-run
-downloads for **Windows** (a self-extracting `.exe`) and **Linux** (a tarball with
+downloads for **Windows** (a self-extracting `.exe`), **macOS Apple Silicon**
+(a tarball with a double-clickable `run.command`) and **Linux** (a tarball with
 a `run.sh`). End users don't clone the repo or run a build step.
 
 ## Features
@@ -48,6 +49,20 @@ Grab the latest build from the
 > SmartScreen may warn about the unsigned `.exe` the first time — choose
 > **More info → Run anyway**.
 
+### macOS (Apple Silicon)
+1. Download **`PrivacyFilter-macos-arm64-vX.Y.Z.tar.gz`** and double-click it
+   to extract.
+2. **First time only:** right-click on `run.command` → **Open** → **Open**.
+   macOS asks because the build is not signed with an Apple Developer ID;
+   after the first launch it stops asking.
+3. Later on, just double-click `run.command`. The first run creates a local
+   virtualenv and downloads the model (~2.7 GB, progress shown in the app).
+
+Requires macOS 12+ (Apple Silicon), Python 3.10+ (Homebrew:
+`brew install python`) and — for OCR of scanned PDFs — Tesseract
+(`brew install tesseract tesseract-lang`). The launcher warns if Tesseract is
+missing but still opens the app for text-layer documents.
+
 ### Linux (technical users)
 1. Download **`PrivacyFilter-linux-vX.Y.Z.tar.gz`** and extract it.
 2. Run `./run.sh`. The first run creates a local virtualenv and installs the
@@ -55,7 +70,7 @@ Grab the latest build from the
 
 Requires Python 3.10+ (`python3` and `python3-venv`).
 
-### Both platforms
+### All platforms
 - **Stop**: the **Quit** button in the UI (the server keeps running if you only
   close the browser tab).
 - **Something wrong?** Use **Diagnostics** in the UI to download a support bundle.
@@ -96,8 +111,14 @@ For Linux, build the UI once (`corepack pnpm -C frontend run build`) and ship
 `requirements-server.txt`, `VERSION` and `packaging/linux/run.sh` together as a
 tarball.
 
+For macOS Apple Silicon, do the same but ship `packaging/macos/run.command`
+instead of `run.sh`. Building must be done on an actual arm64 Mac (or the
+`macos-14` GitHub runner) so the bundled path picks up the right Homebrew
+Python; `.github/workflows/release.yml` does exactly that.
+
 **Releases are automated:** pushing a `vX.Y.Z` tag triggers
-`.github/workflows/release.yml`, which builds both the Windows `.exe` and the Linux
+`.github/workflows/release.yml`, which builds the Windows `.exe`, the macOS
+arm64 tarball, and the Linux
 tarball and attaches them to the GitHub Release. Manual builds are only for local
 testing.
 

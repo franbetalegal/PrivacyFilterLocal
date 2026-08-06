@@ -3,7 +3,8 @@ name: Release
 # Builds the distributable artifacts and publishes a GitHub Release whenever a
 # version tag (vX.Y.Z) is pushed:
 #   - Windows:  PrivacyFilter-Setup-vX.Y.Z.exe  (self-extracting launcher)
-#   - Linux:    PrivacyFilter-linux-vX.Y.Z.tar.gz  (extract + ./run.sh)
+#   - Linux:    PrivacyFilter-linux-vX.Y.Z.tar.gz          (extract + ./run.sh)
+#   - macOS:    PrivacyFilter-macos-arm64-vX.Y.Z.tar.gz    (extract + double-click run.command)
 # Can also be run manually (workflow_dispatch) with an explicit version.
 
 on:
@@ -96,8 +97,46 @@ jobs:
           path: PrivacyFilter-linux-*.tar.gz
           if-no-files-found: error
 
+  macos:
+    needs: version
+    # macos-14 is the Apple Silicon (arm64) runner. macos-13 would be Intel;
+    # we ship arm64 only for now (per the firm's hardware).
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Build frontend
+        run: |
+          pnpm -C frontend install --frozen-lockfile
+          pnpm -C frontend run build
+      - name: Assemble macOS tarball
+        run: |
+          VER="${{ needs.version.outputs.version }}"
+          STAGE="PrivacyFilter-macos-arm64-v$VER"
+          mkdir -p "$STAGE/frontend"
+          cp -r server privacy-filter app_update.py model_update.py \
+                requirements-server.txt VERSION "$STAGE"/
+          cp -r frontend/dist "$STAGE/frontend/dist"
+          cp packaging/macos/run.command "$STAGE/run.command"
+          chmod +x "$STAGE/run.command"
+          # Strip build noise from the bundled opf package copy.
+          find "$STAGE" -name '__pycache__' -type d -prune -exec rm -rf {} +
+          rm -rf "$STAGE/privacy-filter/.git" "$STAGE/privacy-filter/build" \
+                 "$STAGE/privacy-filter/opf.egg-info"
+          tar -czf "$STAGE.tar.gz" "$STAGE"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: macos-tarball
+          path: PrivacyFilter-macos-arm64-*.tar.gz
+          if-no-files-found: error
+
   release:
-    needs: [version, windows, linux]
+    needs: [version, windows, linux, macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -120,6 +159,7 @@ jobs:
             echo "## Downloads"
             echo "- **Windows:** \`PrivacyFilter-Setup-v${VER}.exe\` — double-click; it extracts into a \`PrivacyFilter\` folder next to the .exe and starts automatically. The first run downloads the model (~2.7 GB)."
             echo "- **Linux (technical users):** \`PrivacyFilter-linux-v${VER}.tar.gz\` — extract and run \`./run.sh\` (creates a virtualenv on first run)."
+            echo "- **macOS (Apple Silicon):** \`PrivacyFilter-macos-arm64-v${VER}.tar.gz\` — extract, then double-click \`run.command\`. First time: right-click → Open → Open to bypass Gatekeeper. First run creates a virtualenv."
           } >> notes.md
       - name: Create / update release
         uses: softprops/action-gh-release@v3
@@ -130,3 +170,4 @@ jobs:
           files: |
             artifacts/windows-exe/*.exe
             artifacts/linux-tarball/*.tar.gz
+            artifacts/macos-tarball/*.tar.gz
