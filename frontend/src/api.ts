@@ -269,6 +269,29 @@ export async function importDictionary(
 
 export const DICTIONARY_EXPORT_URL = "/api/dictionary/export";
 
+// --- MarkItDown without anonymization -------------------------------------
+
+export interface MarkdownOnlyResult {
+  download_token: string;
+  download_name: string;
+  elapsed: number;
+  char_count: number;
+}
+
+/** Convert a document to Markdown without running PII detection. The output
+ *  is NOT anonymized: the caller must warn the user before letting them
+ *  share/download the result. */
+export async function convertToMarkdown(
+  file: File,
+  signal?: AbortSignal,
+): Promise<MarkdownOnlyResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return jsonOrThrow(
+    await fetch("/api/markdown", { method: "POST", body: form, signal }),
+  );
+}
+
 // --- Gold set + evaluation (Phase 7) --------------------------------------
 
 export interface DatasetStats {
