@@ -38,7 +38,11 @@ jobs:
           node-version: "22"
       - name: Install frontend dependencies
         run: pnpm -C frontend install --frozen-lockfile
+      - name: Lint
+        run: pnpm -C frontend run lint
       - name: Typecheck
         run: pnpm -C frontend run typecheck
+      - name: Test
+        run: pnpm -C frontend run test
       - name: Build
         run: pnpm -C frontend run build
