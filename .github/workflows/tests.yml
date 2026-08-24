@@ -1,0 +1,44 @@
+name: Tests
+
+# Runs the backend test suite and the frontend typecheck/build on every push
+# and pull request, so a broken commit is caught before it reaches `main`
+# instead of only at release-tag time (.github/workflows/release.yml).
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ./privacy-filter
+          pip install -r requirements-server.txt
+          pip install -r requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest tests/ -v
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        run: pnpm -C frontend install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm -C frontend run typecheck
+      - name: Build
+        run: pnpm -C frontend run build
