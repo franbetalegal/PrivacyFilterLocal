@@ -2,29 +2,29 @@
 # The core ML deps (torch, huggingface_hub, safetensors, tiktoken, numpy) come
 # from privacy-filter/pyproject.toml (installed via `pip install -e .`).
 # Install with:  pip install -r requirements-server.txt
-fastapi
-uvicorn[standard]
-python-multipart
-PyMuPDF
-python-docx
+fastapi==0.141.1
+uvicorn[standard]==0.52.0
+python-multipart==0.0.32
+PyMuPDF==1.28.0
+python-docx==1.2.0
 # OCR fallback for scanned PDFs. Also requires the tesseract binary and the
 # 'spa' traineddata to be installed on the host (brew install tesseract
 # tesseract-lang; apt install tesseract-ocr tesseract-ocr-spa). Both are
 # imported lazily so the app still works without OCR — pages without a text
 # layer are just left blank and reported in the warning.
-pytesseract
-Pillow
+pytesseract==0.3.13
+Pillow==12.3.0
 # Iberian NER (adds recall on top of the primarily-English opf model).
 # After installing this you also need the models:
 #     python -m spacy download es_core_news_lg
 #     python -m spacy download ca_core_news_lg   # for Catalan documents
 # spaCy is imported lazily; if a model is missing the app degrades to whatever
 # models are available (Spanish only, Catalan only, or opf + deterministic).
-spacy
+spacy==3.8.13
 # Language detection so we run only the NER model matching each document's
 # language and avoid tagging Catalan common words as Spanish person names
 # (and vice versa). Very small pure-Python package.
-langdetect
+langdetect==1.0.9
 # Optional post-processing: convert the *already-redacted* PDF/DOCX/etc. to
 # Markdown so the user can paste it into an LLM to summarise or draft with
 # fewer tokens and preserved structure.
@@ -36,4 +36,4 @@ langdetect
 # the package. tests/test_offline_guarantee.py fails if this ever slips.
 # Also `llm_client=None` is set at construction, so images cannot be sent to
 # an external model for captioning.
-markitdown[pdf,docx,pptx,xlsx,xls,outlook]
+markitdown[pdf,docx,pptx,xlsx,xls,outlook]==0.1.7
