@@ -24,7 +24,18 @@ jobs:
           pip install -r requirements-server.txt
           pip install -r requirements-dev.txt
       - name: Run tests
+        # PF_FAST_MOE=0: server/moe_fast.py's "auto" mode times two CPU
+        # implementations and caches the winner per host, but that cache lives
+        # under the model checkpoint dir — on a fresh, ephemeral CI runner
+        # there's never a cache hit, so every run pays for the real
+        # micro-benchmark. That's what killed the first run of this workflow
+        # (job canceled ~44s into tests/test_moe_fast.py::test_install_is_idempotent).
+        # The module documents this exact escape hatch; the two tests that
+        # assert on the benchmark's outcome already skip without the checkpoint
+        # (never downloaded in CI), so this only affects install() plumbing tests.
         run: python -m pytest tests/ -v
+        env:
+          PF_FAST_MOE: "0"
 
   frontend:
     runs-on: ubuntu-latest
