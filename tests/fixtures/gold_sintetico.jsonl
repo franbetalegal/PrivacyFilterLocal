@@ -1,0 +1,30 @@
+{"text": "El presente contrato se rige por lo dispuesto en el articulo 1256 del Codigo Civil y en la Ley 3/2004, de 29 de diciembre, de lucha contra la morosidad en las operaciones comerciales.", "label": [], "grupo": "negativo"}
+{"text": "Visto el expediente por el Juzgado de Primera Instancia numero 4 de Alcala de Henares, y oido el Ministerio Fiscal, procede acordar lo siguiente.", "label": [], "grupo": "negativo"}
+{"text": "CLAUSULA SEXTA. OBLIGACIONES DE LAS PARTES", "label": [], "grupo": "negativo"}
+{"text": "El importe total asciende a 14.750,80 euros, IVA del 21 % incluido, con un recargo del 5 % por demora superior a treinta dias naturales.", "label": [], "grupo": "negativo"}
+{"text": "La entidad Suministros Industriales Anagrama S.L.U. figura inscrita en el Registro Mercantil con el numero de asiento 118.409.", "label": [], "grupo": "negativo"}
+{"text": "Notifiquese la presente resolucion a las partes y librese testimonio para su union a los autos, certificando lo actuado.", "label": [], "grupo": "negativo"}
+{"text": "Procedimiento ordinario 512/2023, pieza separada de medidas cautelares, tramitada conforme al articulo 730 de la Ley de Enjuiciamiento Civil.", "label": [], "grupo": "negativo"}
+{"text": "La competencia territorial corresponde a los tribunales de Barcelona por remision expresa de las partes.", "label": [], "grupo": "negativo"}
+{"text": "El Tribunal Constitucional y el Banco de Espana han emitido informe favorable sobre la propuesta normativa.", "label": [], "grupo": "negativo"}
+{"text": "ANEXO II - RELACION DE DOCUMENTOS APORTADOS AL PROCEDIMIENTO", "label": [], "grupo": "negativo"}
+{"text": "Comparece Inigo Vallespin Arrondo, mayor de edad, provisto de DNI 41820573H, y manifiesta su voluntad de otorgar el presente poder.", "label": [{"category": "NOMBRE", "start": 10, "end": 33}, {"category": "DNI", "start": 66, "end": 75}], "grupo": "positivo"}
+{"text": "La parte demandada, Xiomara Belmonte Quiroga, con NIE Y4812907X, fue emplazada en forma legal.", "label": [{"category": "NOMBRE", "start": 20, "end": 44}, {"category": "NIE", "start": 54, "end": 63}], "grupo": "positivo"}
+{"text": "El domicilio a efectos de notificaciones se fija en calle Herreria de los Olmos 14, 3o B, 28912 Leganes.", "label": [{"category": "DIRECCION", "start": 52, "end": 103}], "grupo": "positivo"}
+{"text": "El abono se realizara mediante transferencia a la cuenta ES2720858371440301827465 titularidad del arrendador.", "label": [{"category": "IBAN", "start": 57, "end": 81}], "grupo": "positivo"}
+{"text": "Consta afiliacion a la Seguridad Social con numero 281049783648 desde el inicio de la relacion laboral.", "label": [{"category": "SEG_SOCIAL", "start": 51, "end": 63}], "grupo": "positivo"}
+{"text": "Puede dirigir cualquier comunicacion a zurine.olabarrieta@correo-ficticio.example o al telefono 612 04 87 39.", "label": [{"category": "EMAIL", "start": 39, "end": 81}, {"category": "TELEFONO", "start": 96, "end": 108}], "grupo": "positivo"}
+{"text": "La interesada, nacida el 14 de marzo de 1979, acredita residencia continuada en territorio nacional.", "label": [{"category": "FECHA", "start": 25, "end": 44}], "grupo": "positivo"}
+{"text": "Actua en nombre propio Teodulfo Manzanedo Iriarte, con DNI 07493162S, y en representacion de la entidad prestataria.", "label": [{"category": "NOMBRE", "start": 23, "end": 49}, {"category": "DNI", "start": 59, "end": 68}], "grupo": "positivo"}
+{"text": "El letrado Anselmo Trigueros Bermejo y la procuradora Ludivina Cabrejas Montiel suscriben el presente escrito.", "label": [{"category": "NOMBRE", "start": 11, "end": 36}, {"category": "NOMBRE", "start": 54, "end": 79}], "grupo": "positivo"}
+{"text": "Se cita a Rosalinda Etxeberria Zugasti para la vista senalada, domiciliada en avenida del Molino Viejo 208, 41013 Sevilla.", "label": [{"category": "NOMBRE", "start": 10, "end": 38}, {"category": "DIRECCION", "start": 78, "end": 121}], "grupo": "positivo"}
+{"text": "El compareciente Nicomedes Banco Salcedo acepta las condiciones economicas pactadas en el documento.", "label": [{"category": "NOMBRE", "start": 17, "end": 40}], "grupo": "trampa"}
+{"text": "Se persona en autos Efigenia Construccion Belaustegui en calidad de administradora concursal.", "label": [{"category": "NOMBRE", "start": 20, "end": 53}], "grupo": "trampa"}
+{"text": "La testigo Maravillas Contrato Ibarrola declara sobre los hechos objeto del procedimiento.", "label": [{"category": "NOMBRE", "start": 11, "end": 39}], "grupo": "trampa"}
+{"text": "Firma en prueba de conformidad Baldomero Datos Urquiaga, sin que conste oposicion alguna.", "label": [{"category": "NOMBRE", "start": 31, "end": 55}], "grupo": "trampa"}
+{"text": "DECLARACION DE SATURNINO PELAYO GOIKOETXEA ANTE EL SECRETARIO JUDICIAL", "label": [{"category": "NOMBRE", "start": 15, "end": 42}], "grupo": "trampa"}
+{"text": "COMPARECENCIA DE HERMENEGILDA LOSTAU BIZKARRA - ACTA NUMERO 77", "label": [{"category": "NOMBRE", "start": 17, "end": 45}], "grupo": "trampa"}
+{"text": "El fiador solidario Casimiro Toledo Aranguren responde de las obligaciones asumidas.", "label": [{"category": "NOMBRE", "start": 20, "end": 45}], "grupo": "trampa"}
+{"text": "Interviene asimismo Purificacion Palencia Sarasola como parte codemandada en el litigio.", "label": [{"category": "NOMBRE", "start": 20, "end": 50}], "grupo": "trampa"}
+{"text": "El Juzgado de lo Social numero 2 de Getafe dicto sentencia estimatoria en fecha reciente.", "label": [], "grupo": "trampa"}
+{"text": "Se aplica el Real Decreto Legislativo 2/2015 y el Estatuto de los Trabajadores en su redaccion vigente.", "label": [], "grupo": "trampa"}

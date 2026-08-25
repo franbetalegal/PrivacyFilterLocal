@@ -42,7 +42,8 @@ Configuration via environment variables:
     - ``PF_NER_MODEL``   Legacy single-model alias; used only when
       ``PF_NER_MODELS`` is unset.
     - ``PF_NER_LABELS``  Comma-separated entity types to keep (default:
-      ``PER,LOC,ORG``). Add ``MISC`` if the domain benefits from it.
+      ``PER,LOC``). Add ``ORG`` to redact company and institution names, or
+      ``MISC`` if the domain benefits from it.
 """
 from __future__ import annotations
 
@@ -50,13 +51,19 @@ import logging
 import os
 import re
 import threading
+import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from server.lexicon_es import (
+    ENTITY_MARKERS,
     GENERIC_SINGLE,
     MONTHS,
     NEVER_IN_NAME,
     NUMBER_WORDS,
+    PERSON_TRIGGER_PHRASES,
+    PERSON_TRIGGER_PHRASES_LEADING,
+    PERSON_TRIGGER_WORDS,
     PUBLIC_PHRASES,
     REGIONS,
     STREET_MARKERS,
@@ -76,8 +83,14 @@ elif _LEGACY_MODEL:
 else:
     _MODEL_NAMES = ("es_core_news_lg", "ca_core_news_lg")
 
+# ORG is off by default. Policy: a legal-entity name is what keeps a document
+# readable ("Agencia Tributaria", the bank, the counterparty), and redacting it
+# rarely protects a natural person — the entity is identified by its NIF
+# anyway. Measured on a real 28-page tax document, ORG accounted for 51 of 154
+# redactions (33%), which is what made the output unusable. Set
+# PF_NER_LABELS=PER,LOC,ORG to restore the previous behaviour.
 _ENABLED_LABELS = frozenset(
-    label.strip() for label in os.environ.get("PF_NER_LABELS", "PER,LOC,ORG").split(",")
+    label.strip() for label in os.environ.get("PF_NER_LABELS", "PER,LOC").split(",")
     if label.strip()
 )
 
@@ -350,6 +363,149 @@ _LOCATION_LABELS = frozenset({
 })
 
 
+# How much text before the span counts as "context". Long enough to hold a
+# title plus a couple of words ("El compareciente ", "Se persona en autos "),
+# short enough that an unrelated role word earlier in the sentence does not
+# reach across and rescue something it has nothing to do with.
+_CONTEXT_CHARS = 48
+
+
+def _fold_accents(text: str) -> str:
+    """Lowercase and strip diacritics, so lexicons need one spelling."""
+    decomposed = unicodedata.normalize("NFD", text.lower())
+    return "".join(c for c in decomposed if unicodedata.category(c) != "Mn")
+
+
+def _looks_like_legal_entity(tokens: Sequence[str]) -> bool:
+    """True when the span carries a company-form marker.
+
+    Policy: legal-entity names are left in the clear, so a context trigger must
+    never rescue one. A sole trader's name carries no marker and is unaffected.
+    """
+    # Dots are removed anywhere, not just at the edges: "S.A." tokenises to
+    # "S.A", whose inner dot would otherwise hide the marker.
+    return any(_fold_accents(t).replace(".", "") in ENTITY_MARKERS for t in tokens)
+
+
+# How many words may sit between the trigger and the span. A trigger governs
+# what comes right after it ("El compareciente X", "Firma en prueba de
+# conformidad X" — two intervening words), not something further down the line.
+# Without this bound, a heading like "COMPARECENCIA DE <nombre> - ACTA NUMERO
+# 77" rescued "ACTA NUMERO 77", because the trigger was still inside the
+# character window.
+_MAX_WORDS_AFTER_TRIGGER = 2
+
+
+def _words_after_last_trigger(window: str) -> int | None:
+    """Words between the last person trigger in ``window`` and its end.
+
+    ``None`` when the window holds no trigger at all. ``window`` must already
+    be accent-folded and lowercase.
+    """
+    end_of_trigger: int | None = None
+    for phrase in PERSON_TRIGGER_PHRASES:
+        found = window.rfind(phrase)
+        if found != -1:
+            candidate = found + len(phrase)
+            if end_of_trigger is None or candidate > end_of_trigger:
+                end_of_trigger = candidate
+    for match in re.finditer(r"[a-z]+", window):
+        if match.group() in PERSON_TRIGGER_WORDS:
+            if end_of_trigger is None or match.end() > end_of_trigger:
+                end_of_trigger = match.end()
+    if end_of_trigger is None:
+        return None
+    return len(re.findall(r"[a-z]+", window[end_of_trigger:]))
+
+
+def strip_leading_person_trigger(text: str) -> tuple[str, int]:
+    """Peel a person trigger off the FRONT of a span.
+
+    Returns ``(remaining_text, chars_dropped)``. spaCy sometimes swallows the
+    announcing words into the entity itself — the Catalan model tags
+    "COMPARECENCIA DE <nombre>" as one ORG span — which hides the trigger from
+    the context check and leaves the span boundaries wrong. Mirror image of
+    :func:`trim_trailing_role_words`.
+
+    Only leading words that are themselves triggers (plus the connectors
+    between them) are removed, and never all of them: at least two tokens must
+    survive, otherwise there is no name left to keep.
+    """
+    tokens = text.split()
+    if len(tokens) < 3:
+        return text, 0
+    connectors = {"de", "del", "la", "el", "los", "las", "a", "en", "por"}
+
+    # Leading phrase first: spaCy's commonest swallow is "COMPARECENCIA DE
+    # <nombre>", whose first word is not a trigger word on its own.
+    folded_all = _fold_accents(text)
+    for phrase in PERSON_TRIGGER_PHRASES_LEADING:
+        if folded_all.startswith(phrase):
+            remaining = text[len(phrase):].lstrip(" ,;:-")
+            if len(remaining.split()) >= 2:
+                return remaining, len(text) - len(remaining)
+
+    cut = 0
+    for index, token in enumerate(tokens):
+        folded = _fold_accents(token).strip(".,;:")
+        if folded in PERSON_TRIGGER_WORDS or folded in connectors:
+            # A connector alone never starts a trigger run.
+            if cut == 0 and folded in connectors:
+                break
+            cut = index + 1
+            continue
+        break
+    if cut == 0 or len(tokens) - cut < 2:
+        return text, 0
+    # Trailing connectors belong to the trigger, not the name.
+    while cut < len(tokens) and _fold_accents(tokens[cut]).strip(".,;:") in connectors:
+        cut += 1
+    if len(tokens) - cut < 2:
+        return text, 0
+    remaining = " ".join(tokens[cut:])
+    dropped = len(text) - len(remaining)
+    return remaining, max(dropped, 0)
+
+
+def _resolve_label(spacy_label: str, text: str, context: str) -> str | None:
+    """Decide which label a spaCy entity is kept under, or ``None`` to drop it.
+
+    Enabled labels pass through. A disabled ORG gets one second chance: spaCy
+    routinely tags an all-caps person name as an organisation, and with ORG
+    switched off that name would silently stop being redacted. When the
+    preceding text announces a person and the span carries no company-form
+    marker, it is kept as PER instead of dropped.
+
+    Found by measurement: disabling ORG cost one name on the synthetic corpus
+    ("COMPARECENCIA DE <nombre>", tagged ORG by spaCy), taking the leak count
+    from 4 to 5. A readability change must not cost protection.
+    """
+    if spacy_label in _ENABLED_LABELS:
+        return spacy_label
+    if spacy_label != "ORG" or "PER" not in _ENABLED_LABELS:
+        return None
+    tokens = _tokens_of(text.strip().rstrip(".,;"))
+    if len(tokens) < 2 or _looks_like_legal_entity(tokens):
+        return None
+    return "PER" if has_person_trigger(context) else None
+
+
+def has_person_trigger(context: str) -> bool:
+    """True when the text right before a span announces a natural person.
+
+    ``context`` is the document text preceding the span; only the last
+    ``_CONTEXT_CHARS`` characters are examined, and the trigger must be within
+    ``_MAX_WORDS_AFTER_TRIGGER`` words of the span. Used to rescue name spans
+    that the span-only lexicon rules reject for the wrong reason — a surname
+    colliding with contract boilerplate ("Banco", "Construcción", "Contrato").
+    """
+    if not context:
+        return False
+    window = _fold_accents(context[-_CONTEXT_CHARS:])
+    distance = _words_after_last_trigger(window)
+    return distance is not None and distance <= _MAX_WORDS_AFTER_TRIGGER
+
+
 def _in_vocab(token: str, vocab: frozenset[str]) -> bool:
     """Membership test that also tries the singular of a plural token.
 
@@ -409,6 +565,7 @@ def is_probably_false_positive(
     *,
     strict: bool = True,
     label: str | None = None,
+    context: str = "",
 ) -> bool:
     """True if a statistical span should not be redacted.
 
@@ -420,6 +577,15 @@ def is_probably_false_positive(
     ``label`` is the source label when known ("ES_NER_LOC", "private_person",
     …). It only gates the bare-toponym rule, which must not fire on person
     names that happen to be short and capitalised.
+
+    ``context`` is the document text immediately preceding the span. When it
+    announces a natural person ("El compareciente ", "Se persona en autos "),
+    the lexicon rules below are skipped: they reject a whole span for a single
+    boilerplate token, and "Banco", "Construcción" and "Contrato" are real
+    Spanish surnames. The structural rules above the rescue point still apply,
+    so OCR garbage, amounts and statute citations are rejected either way, and
+    a span carrying a company-form marker is never rescued (legal-entity names
+    are deliberately left in the clear).
 
     Deterministic recognizers (DNI/IBAN/CIF/registry refs) bypass this check
     entirely — their matches are already structurally validated.
@@ -459,6 +625,31 @@ def is_probably_false_positive(
         return True
     lowered = [t.lower() for t in tokens]
 
+    # Nothing but known generic vocabulary → a description, not an entity.
+    # A real name or address always contributes at least one word the lexicon
+    # doesn't know ("Pereda", "Comadrán", "García"). This is the rule that
+    # catches "Planta Sótano" / "Parcela Urbana" without a bespoke entry.
+    #
+    # It sits ABOVE the context rescue on purpose: a span in which every token
+    # is known vocabulary is never a name, whatever precedes it. Measured on
+    # the synthetic corpus, moving it below let "ACTA NUMERO 77" through when a
+    # heading ("COMPARECENCIA DE …") fell inside the context window.
+    if all(_is_generic_token(t) for t in lowered):
+        return True
+
+    # --- context rescue -------------------------------------------------
+    # Everything above is structural or vocabulary-complete: OCR garbage, form
+    # labels, filenames, amounts, statute citations, whole-phrase public bodies,
+    # all-known-words spans. Those hold no matter what surrounds the span.
+    # Everything below rejects on a SINGLE token, which is where real surnames
+    # die. If the preceding text announces a person, stop here and keep it.
+    if (
+        len(tokens) > 1
+        and not _looks_like_legal_entity(tokens)
+        and has_person_trigger(context)
+    ):
+        return False
+
     # Contract/legal boilerplate: one such word anywhere means clause text.
     # A real name contains none of them, so this is safe at any span length.
     # Plurals are matched by also probing the singular, so the lexicon only
@@ -467,13 +658,6 @@ def is_probably_false_positive(
         return True
 
     if any(_in_vocab(t, VERBS) for t in lowered):
-        return True
-
-    # Nothing but known generic vocabulary → a description, not an entity.
-    # A real name or address always contributes at least one word the lexicon
-    # doesn't know ("Pereda", "Comadrán", "García"). This is the rule that
-    # catches "Planta Sótano" / "Parcela Urbana" without a bespoke entry.
-    if all(_is_generic_token(t) for t in lowered):
         return True
 
     # Bare municipality / region (policy: only full addresses are PII, a lone
@@ -621,6 +805,40 @@ def _select_nlps_for(block: str) -> list:
     return _nlps
 
 
+# A run of this many consecutive all-caps words is treated as a heading or a
+# name written in caps, and earns a second NER pass over a case-normalised copy.
+_MIN_ALLCAPS_RUN = 2
+
+_ALLCAPS_RUN_RE = re.compile(
+    r"(?:\b[A-ZÁÉÍÓÚÜÑÇ][A-ZÁÉÍÓÚÜÑÇ'’-]{2,}\b(?:\s+|$)){%d,}" % _MIN_ALLCAPS_RUN
+)
+
+
+def normalize_allcaps_runs(block: str) -> str | None:
+    """Title-case the all-caps runs in ``block``, leaving the rest untouched.
+
+    Returns ``None`` when there is nothing to normalise, or when the result
+    would not be the same length as the input — offsets are mapped 1:1 back
+    onto the original text, so a length change would corrupt them. ``str.title``
+    is length-preserving for Spanish and Catalan, but the check is cheap and a
+    silent offset shift would redact the wrong characters.
+
+    Why this exists: the spaCy models are case-sensitive and trained on
+    mixed-case text. Measured with ``es_core_news_lg``, the same sentence in
+    caps yields fragments ("COMPARECENCIA"/MISC, "LOSTAU"/LOC) while the
+    title-cased copy yields the whole person name as PER. Spanish legal and tax
+    documents put names in caps constantly — headings, appearances, tables — so
+    without this pass those names are never even proposed, and no downstream
+    filter can rescue what was never detected.
+    """
+    if not _ALLCAPS_RUN_RE.search(block):
+        return None
+    normalised = _ALLCAPS_RUN_RE.sub(lambda m: m.group().title(), block)
+    if len(normalised) != len(block) or normalised == block:
+        return None
+    return normalised
+
+
 def analyze(text: str, *, strict: bool = True) -> list[NERSpan]:
     """Run per-block language-appropriate NER over the whole document.
 
@@ -640,48 +858,76 @@ def analyze(text: str, *, strict: bool = True) -> list[NERSpan]:
     seen: set[tuple[int, int, str]] = set()
     results: list[NERSpan] = []
     for start_off, block in _iter_blocks(text):
-        for nlp in _select_nlps_for(block):
-            doc = nlp(block)
-            for ent in doc.ents:
-                if ent.label_ not in _ENABLED_LABELS:
-                    continue
-                ent_text = ent.text
-                start_c = ent.start_char
-                end_c = ent.end_char
-                # Public-phrase and content-based filters run on the ORIGINAL
-                # text first, because trimming a form label like "Codi Segur de
-                # Verificació" would leave "Codi Segur de" — no longer a match
-                # for the phrase stoplist.
-                if is_probably_false_positive(
-                    ent_text, strict=strict, label=f"ES_NER_{ent.label_}"
-                ):
-                    continue
-                # Trim trailing role/label tokens ("Mateo Ruiz Cano Domicilio"
-                # → "Mateo Ruiz Cano", "Dani Tipus d'enviament" → "Dani").
-                trimmed_text, dropped = trim_trailing_role_words(ent_text)
-                if dropped:
-                    ent_text = trimmed_text
-                    end_c -= dropped
-                    if end_c <= start_c:
+        # Two views of the same block: as written, and with all-caps runs
+        # title-cased so the case-sensitive models can see names in caps. The
+        # normalised view is length-preserving, so entity offsets from it index
+        # straight back into the original block; span text is always taken from
+        # the original so redaction replaces what the document really contains.
+        views = [block]
+        normalised = normalize_allcaps_runs(block)
+        if normalised is not None:
+            views.append(normalised)
+        for view in views:
+            for nlp in _select_nlps_for(view):
+                doc = nlp(view)
+                for ent in doc.ents:
+                    start_c = ent.start_char
+                    end_c = ent.end_char
+                    ent_text = block[start_c:end_c]
+                    # Public-phrase and content-based filters run on the ORIGINAL
+                    # text first, because trimming a form label like "Codi Segur de
+                    # Verificació" would leave "Codi Segur de" — no longer a match
+                    # for the phrase stoplist.
+                    contexto = block[:start_c]
+                    # spaCy may have swallowed the announcing words into the span
+                    # ("COMPARECENCIA DE <nombre>" as one ORG). Peel them off so
+                    # the trigger is visible to the context check and the span
+                    # boundaries land on the name itself.
+                    if ent.label_ == "ORG" and ent.label_ not in _ENABLED_LABELS:
+                        peeled, dropped_front = strip_leading_person_trigger(ent_text)
+                        if dropped_front:
+                            ent_text = peeled
+                            start_c += dropped_front
+                            contexto = block[:start_c]
+                    label = _resolve_label(ent.label_, ent_text, contexto)
+                    if label is None:
                         continue
-                    # Re-check on the trimmed form: after peeling role words
-                    # a genuine name may still be left, but a heading remnant
-                    # like "Codi Segur de" should be dropped too.
                     if is_probably_false_positive(
-                        ent_text, strict=strict, label=f"ES_NER_{ent.label_}"
+                        ent_text,
+                        strict=strict,
+                        label=f"ES_NER_{label}",
+                        context=contexto,
                     ):
                         continue
-                abs_start = start_off + start_c
-                abs_end = start_off + end_c
-                key = (abs_start, abs_end, ent.label_)
-                if key in seen:
-                    continue
-                seen.add(key)
-                results.append(NERSpan(
-                    start=abs_start,
-                    end=abs_end,
-                    entity_type=f"ES_NER_{ent.label_}",
-                    score=_NER_BASELINE_SCORE,
-                    text=ent_text,
-                ))
+                    # Trim trailing role/label tokens ("Mateo Ruiz Cano Domicilio"
+                    # → "Mateo Ruiz Cano", "Dani Tipus d'enviament" → "Dani").
+                    trimmed_text, dropped = trim_trailing_role_words(ent_text)
+                    if dropped:
+                        ent_text = trimmed_text
+                        end_c -= dropped
+                        if end_c <= start_c:
+                            continue
+                        # Re-check on the trimmed form: after peeling role words
+                        # a genuine name may still be left, but a heading remnant
+                        # like "Codi Segur de" should be dropped too.
+                        if is_probably_false_positive(
+                            ent_text,
+                            strict=strict,
+                            label=f"ES_NER_{label}",
+                            context=contexto,
+                        ):
+                            continue
+                    abs_start = start_off + start_c
+                    abs_end = start_off + end_c
+                    key = (abs_start, abs_end, label)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    results.append(NERSpan(
+                        start=abs_start,
+                        end=abs_end,
+                        entity_type=f"ES_NER_{label}",
+                        score=_NER_BASELINE_SCORE,
+                        text=ent_text,
+                    ))
     return results

@@ -344,3 +344,87 @@ MONTHS = frozenset({
     "gener", "febrer", "març", "marc", "maig", "juny", "juliol", "agost",
     "setembre", "octubre", "novembre", "desembre",
 })
+
+# --- context triggers -----------------------------------------------------
+#
+# The lexicons above answer "does this span look like boilerplate?" using the
+# span alone. That is blunt in one specific way: NEVER_IN_NAME rejects a whole
+# span when any single token hits it, and "Banco", "Construcción", "Palencia"
+# and "Contrato" are real Spanish surnames. Measured on the synthetic corpus,
+# that rule alone accounted for four of six missed names.
+#
+# The lexicons below answer a different question — "does the text immediately
+# BEFORE this span announce a person?" — so a span can be rescued from the
+# blunt rejection without weakening the structural rules that catch OCR
+# garbage, amounts and statute citations.
+#
+# Entries are stored unaccented and lowercase; matching folds accents, so
+# "Doña" reaches "dona" and "compareció" reaches "comparecio".
+
+# Single tokens that only ever introduce a natural person. Deliberately
+# excludes ambiguous words ("persona", "firma", "titular", "cita"), which are
+# covered as multi-word phrases below — "la firma de la empresa" must not
+# rescue a company name.
+PERSON_TRIGGER_WORDS = frozenset({
+    # Courtesy titles.
+    "d", "da", "dna", "don", "dona", "sr", "sra", "sres", "sras", "srta",
+    # Procedural and contractual roles.
+    "compareciente", "comparecientes", "interesado", "interesada",
+    "demandante", "demandado", "demandada", "codemandado", "codemandada",
+    "denunciante", "denunciado", "denunciada", "querellante",
+    "testigo", "testigos", "letrado", "letrada", "procurador", "procuradora",
+    "abogado", "abogada", "perito", "peritos", "notario", "notaria",
+    "fiador", "fiadora", "avalista", "arrendador", "arrendadora",
+    "arrendatario", "arrendataria", "prestatario", "prestataria",
+    "prestamista", "comprador", "compradora", "vendedor", "vendedora",
+    "apoderado", "apoderada", "representado", "representada",
+    "heredero", "heredera", "legatario", "legataria", "causante",
+    "solicitante", "beneficiario", "beneficiaria", "adjudicatario",
+    "trabajador", "trabajadora", "empleado", "empleada",
+    "conyuge", "conyuges", "otorgante", "otorgantes",
+    # Verbs of appearance (finite forms only — the infinitive is too generic).
+    "comparece", "comparecio", "comparecen", "interviene", "intervienen",
+    "declara", "manifiesta", "manifiestan", "suscribe", "suscriben",
+    "otorga", "otorgan", "acepta", "reconoce",
+})
+
+# Multi-word triggers, for cases where the individual words are too generic to
+# be safe on their own.
+PERSON_TRIGGER_PHRASES = frozenset({
+    "se persona", "se personan", "en nombre de", "en nombre propio",
+    "en representacion de", "representado por", "representada por",
+    "a favor de", "por parte de",
+    "firma en prueba", "firman en prueba", "firmado por",
+    "con dni", "con nie", "con nif", "con pasaporte", "provisto de",
+    "provista de", "domiciliado en", "domiciliada en",
+    "nacido el", "nacida el", "mayor de edad",
+    "comparecencia de", "se cita a", "se emplaza a",
+    "doy fe de que", "identificado como", "identificada como",
+})
+
+# NOT a trigger: "declaracion de". In Spanish tax and legal documents it
+# introduces a thing far more often than a person ("declaración de la renta",
+# "declaración de bienes"), and the whole point of the rescue is to stop
+# manufacturing false positives.
+
+# The subset safe to peel off the FRONT of a span (see
+# ``ner_es.strip_leading_person_trigger``). Restricted to phrases that
+# unambiguously announce a natural person, because anything peeled here turns
+# the remainder into a name candidate.
+PERSON_TRIGGER_PHRASES_LEADING = frozenset({
+    "comparecencia de", "se cita a", "se emplaza a",
+    "en nombre de", "representado por", "representada por",
+    "a favor de", "identificado como", "identificada como",
+})
+
+# Legal-entity markers. Policy decision: company names stay in the clear so the
+# document keeps making sense, so a context trigger must NOT rescue a span that
+# carries one of these. A sole trader is the exception the guard has to respect
+# — there the "company name" is a natural person's name and carries no marker.
+ENTITY_MARKERS = frozenset({
+    "sl", "sa", "slu", "sau", "slp", "slne", "scp", "sc", "scoop", "coop",
+    "sci", "aie", "ute", "cb", "sicav", "sgr", "fp",
+    "sociedad", "sociedades", "cooperativa", "asociacion", "fundacion",
+    "mercantil", "limitada", "anonima", "unipersonal",
+    "gmbh", "ltd", "llc", "inc", "plc", "bv", "nv", "spa", "srl", "sas",
+})

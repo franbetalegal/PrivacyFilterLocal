@@ -59,3 +59,11 @@ skills-lock.json
 # anonymize (names, companies). Must never be committed.
 data/
 custom_terms.json
+
+# Real documents used for manual testing. These are client files with personal
+# data (names, DNI, tax and health information) and must never be committed:
+# this repository is published. Synthetic fixtures live in tests/fixtures/ and
+# are safe to track.
+tests/files for tests/
+tests/files for test/
+*.tar.gz
