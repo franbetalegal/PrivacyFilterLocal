@@ -85,9 +85,26 @@ for _router_module in (core, markdown, dictionary, dataset, updates, diagnostics
 # --------------------------------------------------------------------------
 #  Static frontend (mounted last so /api/* takes precedence)
 # --------------------------------------------------------------------------
+class _NoStoreIndex(StaticFiles):
+    """Serve the built frontend, but never let the browser cache the entry page.
+
+    Asset filenames are content-hashed by Vite, so they are safe to cache
+    forever. ``index.html`` is not hashed, and it is the file that names which
+    bundle to load: a cached copy keeps requesting the previous build. Rebuild
+    the frontend and the browser happily shows the old interface, which reads
+    exactly like the change never landed.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if path in ("", ".", "/", "index.html"):
+            response.headers["Cache-Control"] = "no-store, must-revalidate"
+        return response
+
+
 def _mount_frontend() -> None:
     if FRONTEND_DIST.is_dir():
-        app.mount("/", StaticFiles(directory=str(FRONTEND_DIST), html=True),
+        app.mount("/", _NoStoreIndex(directory=str(FRONTEND_DIST), html=True),
                   name="frontend")
         logger.info("Serving frontend from %s", FRONTEND_DIST)
     else:

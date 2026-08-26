@@ -62,10 +62,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # ubuntu-latest ships a global pnpm that conflicts with the pinned
-      # packageManager (pnpm@11.5.1) when invoked via corepack. Install the
-      # pinned version directly, and BEFORE setup-node (v5 validates the package
-      # manager and fails if pnpm is not yet on PATH), so pnpm runs cleanly.
+      # ubuntu-latest ships a global pnpm that can differ from the pinned
+      # packageManager in frontend/package.json. action-setup reads that field
+      # and installs the matching version, and runs BEFORE setup-node (v5
+      # validates the package manager and fails if pnpm is not yet on PATH),
+      # so pnpm runs cleanly. The version lives in package.json only.
       - uses: pnpm/action-setup@v6
         with:
           package_json_file: frontend/package.json
