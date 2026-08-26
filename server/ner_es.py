@@ -255,6 +255,14 @@ _LEGAL_CODES = frozenset({
 # concatenation — never inside a Spanish/Catalan name.
 _STRUCTURAL_CHARS = "()[]{}~|©«»#*_\\"
 
+# A URL or a bare domain. Kept deliberately narrow: a scheme, a www prefix, or a
+# host ending in one of the TLDs that actually show up in Spanish official
+# documents.
+_URL_LIKE = re.compile(
+    r"https?://|www\.|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:es|com|org|net|gob|eu|cat|info)\b",
+    re.IGNORECASE,
+)
+
 
 def _normalized_phrase(text: str) -> str:
     """Lowercase and collapse whitespace/punctuation for phrase lookup."""
@@ -601,6 +609,14 @@ def is_probably_false_positive(
     if _FILENAME_RE.fullmatch(stripped):
         return True
 
+    # A URL or bare domain is never a person, an address or a date. Reviewed on
+    # a real tax document, the analyzer had tagged the tax agency's own portal
+    # ("https://sede.agenciatributaria.gob.es") as a person name. opf's own
+    # ``private_url`` label does not reach this filter, so nothing legitimate is
+    # lost here.
+    if _URL_LIKE.search(stripped):
+        return True
+
     if any(ch in stripped for ch in _STRUCTURAL_CHARS):
         return True
 
@@ -666,12 +682,30 @@ def is_probably_false_positive(
     if label in _LOCATION_LABELS and _is_bare_place(stripped, tokens):
         return True
 
+    # The announcing word is not the announced person: a span made only of
+    # titles and role words ("Dña", "Fdo", "D.") carries no identity. These
+    # reach the analyzer from blank form lines waiting to be filled in.
+    if all(_fold_accents(t) in PERSON_TRIGGER_WORDS for t in lowered):
+        return True
+
     # --- Single-token rules ---
     if len(tokens) == 1:
         if _HEADING_ALLCAPS.fullmatch(stripped):
             return True
         if _in_vocab(lowered[0], GENERIC_SINGLE):
             return True
+        # One capitalised WORD is weak evidence of a person, and in a form it is
+        # usually a field label. Reviewed on a real tax document, every
+        # single-token person span was a false positive: "Ganancia", "Renta",
+        # "Dilaciones", "Donativos", "Mínimo", "nuda", "aaee". Keep it only when
+        # the preceding text actually announces a person ("D. Nekane"), which is
+        # the one case where a lone first name is genuinely PII.
+        #
+        # Tokens carrying digits are a different class and exempt: a date
+        # ("31/10/2025") or a reference is legitimately one token and has no
+        # person trigger in front of it.
+        if not any(c.isdigit() for c in stripped):
+            return not has_person_trigger(context)
         return False
 
     # --- Multi-token shape heuristics (spaCy only) ---

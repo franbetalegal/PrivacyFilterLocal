@@ -45,6 +45,25 @@ VERBS = frozenset({
 # The bulk of the noise in bank policies and notarial deeds. Any of these
 # inside a span means it's clause text, not an entity.
 NEVER_IN_NAME = frozenset({
+    # Tax and accounting vocabulary. These reach the analyzer as field labels in
+    # AEAT forms, where a lone capitalised noun looks exactly like a first name.
+    # Reviewed on a real 28-page liquidation proposal, every false positive the
+    # reviewer flagged was one of these or a single-token variant of one.
+    # Deliberately excludes words that are also Spanish surnames (Prada, Soler,
+    # Bravo…); where a term below could be a rare surname, the context rescue in
+    # ner_es keeps it when a person trigger precedes it.
+    "contribuyente", "contribuyentes", "ganancia", "ganancias",
+    "perdida", "pérdida", "perdidas", "pérdidas",
+    "renta", "rentas", "dilacion", "dilación", "dilaciones",
+    "donativo", "donativos", "minimo", "mínimo", "maximo", "máximo",
+    "liquidable", "imponible", "retencion", "retención", "retenciones",
+    "deduccion", "deducción", "deducciones", "cuota", "cuotas", "tramo",
+    "autonomica", "autonómica", "autonomico", "autonómico", "estatal",
+    "integracion", "integración", "compensacion", "compensación",
+    "transmision", "transmisión", "transmisiones",
+    "patrimonial", "patrimoniales", "usufructo", "nuda",
+    "inmueble", "inmuebles", "ejercicio", "devengo", "borrador",
+    "alegaciones", "gestora", "aaee",
     # Contract structure
     "contrato", "contrase", "poliza", "póliza", "escritura", "escrituras",
     "clausula", "cláusula", "clausulado", "estipulaciones", "condiciones",

@@ -224,3 +224,70 @@ def test_las_lineas_muy_cortas_se_ignoran():
     texto = "Titular\nX\nBittori Etxaniz Larranaga"
     segmentos = [s for _, s in ner_es._iter_segments(texto)]
     assert "X" not in segmentos
+
+
+# --- false positives found by reviewing a real tax document ---------------
+#
+# A reviewer went through every redaction the pipeline made on a 28-page AEAT
+# liquidation proposal and flagged the wrong ones. All of them were NOMBRE or
+# LUGAR, and all fell into three classes. The values below carry no personal
+# data: they are tax vocabulary, public URLs and form abbreviations.
+
+@pytest.mark.parametrize(
+    "vocabulario_fiscal",
+    [
+        "Ganancia", "Ganancias", "Renta", "Dilaciones", "Donativos",
+        "Minimo", "nuda", "aaee", "B.L.", "Minimo contribuyente",
+        "GANANCIA PAT",
+    ],
+)
+def test_el_vocabulario_fiscal_no_es_un_nombre(vocabulario_fiscal):
+    assert (
+        ner_es.is_probably_false_positive(vocabulario_fiscal, label="ES_NER_PER")
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://sede.agenciatributaria.gob.es",
+        "sede.administracion.gob.es/carpeta",
+        "www.agenciatributaria.es",
+        "rea.redsara.es",
+    ],
+)
+def test_una_url_no_es_una_persona(url):
+    assert ner_es.is_probably_false_positive(url, label="ES_NER_PER") is True
+
+
+@pytest.mark.parametrize("abreviatura", ["Dna", "Fdo", "D", "Sr", "Sra"])
+def test_el_disparador_solo_no_es_el_nombre(abreviatura):
+    # Blank form lines ("ALEGACIONES D/Dña.____") leave the honorific alone.
+    # The announcing word is not the announced person.
+    assert ner_es.is_probably_false_positive(abreviatura, label="ES_NER_PER") is True
+
+
+@pytest.mark.parametrize("palabra", ["alquilado", "motivan", "superior", "Clave"])
+def test_una_palabra_suelta_no_basta_para_ser_entidad(palabra):
+    # Single capitalised words were being redacted as names and places: a past
+    # participle, a verb, an adjective, and the AEAT's authentication system.
+    assert ner_es.is_probably_false_positive(palabra, label="ES_NER_PER") is True
+    assert ner_es.is_probably_false_positive(palabra, label="ES_NER_LOC") is True
+
+
+def test_un_nombre_de_pila_suelto_sobrevive_con_disparador():
+    # The one case where a lone word IS personal data: something announces it.
+    assert (
+        ner_es.is_probably_false_positive(
+            "Nekane", label="ES_NER_PER", context="Dona "
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize("fecha", ["31/10/2025", "19/10/2022", "08/10/1974"])
+def test_una_fecha_de_un_solo_token_sigue_pasando(fecha):
+    # Regression: the single-token rule must not swallow dates. A token with
+    # digits is a different class of evidence from a lone capitalised word.
+    assert ner_es.is_probably_false_positive(fecha) is False
