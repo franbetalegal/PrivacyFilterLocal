@@ -11,8 +11,23 @@ a `run.sh`). End users don't clone the repo or run a build step.
 - **Three-layer detection pipeline** (all local): the OpenAI Privacy Filter
   transformer + deterministic Spanish/Catalan recognizers with check-digit
   validation (DNI, NIE, NIF/CIF, IBAN, Seguridad Social, credit card, phone,
-  postal code, plate, cadastral ref) + statistical spaCy NER for names,
-  locations and organisations. See [Spanish & Catalan pipeline](#spanish--catalan-pipeline).
+  postal code, plate, cadastral ref) plus shape-matched street addresses and
+  verification codes + statistical spaCy NER for names and locations.
+  See [Spanish & Catalan pipeline](#spanish--catalan-pipeline).
+- **Tuned on real administrative documents.** Names written in caps inside a
+  form header, surnames that collide with contract vocabulary ("Banco",
+  "Construcción" are real Spanish surnames), and addresses hard-wrapped across
+  two lines are all detected — the cases a paragraph-level model misses because
+  PDF extraction cuts entities in half and puts unrelated form fields side by
+  side.
+- **Códigos Seguros de Verificación are removed.** A CSV is not another
+  identifier, it is a credential: with it anyone can fetch the original from the
+  issuing body's website, so an "anonymised" copy carrying its own CSV can be
+  traded back for the original.
+- **Redacts what identifies, keeps what the document is about.** Dates of birth
+  go; acquisition and transmission dates stay, because a capital gain is computed
+  from them. Company and institution names stay too. The result is a copy you can
+  hand to a model to reason about the matter without handing over the person.
 - **Consistent pseudonymisation**: every mention of the same entity is replaced
   by the same readable token (`[NOMBRE_1]`, `[DNI_1]`, `[LUGAR_1]`), so the
   redacted document stays coherent for legal review.
@@ -23,7 +38,8 @@ a `run.sh`). End users don't clone the repo or run a build step.
     text boxes and comments.
   - **Scanned PDFs** are OCR'd with Tesseract (`spa`/`cat`/`eng`).
 - **Post-redaction leak check**: the output is re-extracted and any surviving
-  PII string is reported as a warning.
+  PII string is reported as a warning. On a scanned PDF the check cannot see
+  inside the image, and says so rather than reporting a clean result.
 - **Multi-core**: scanned-PDF OCR is parallelised across CPU cores, always
   leaving some free for the host (see [Performance & tuning](#performance--tuning)).
 - Runs entirely offline (after the model is downloaded once).
@@ -157,14 +173,37 @@ adds two local layers tuned for Spanish/Catalan legal documents:
    digit / checksum validation, so a match is confirmed before it's redacted:
    DNI, NIE, NIF/CIF, IBAN (mod-97), Seguridad Social (mod-97), credit card
    (Luhn), phone, postal code, plate, cadastral reference.
-2. **Statistical NER** (`server/ner_es.py`) — spaCy models for person /
-   location / organisation. Multiple language models load in parallel; the text
-   is split into paragraph blocks and each block is routed to the model that
-   matches its detected language, so a Spanish model never tags Catalan common
-   words as names (and vice versa) in a bilingual document. A false-positive
-   filter drops section headings, form labels, public institutions/regions
-   (not personal data), file names and OCR garbage, and trims trailing role
-   words (`Mateo Ruiz Cano Domicilio` → `Mateo Ruiz Cano`).
+
+   Two entities have no check digit and earn their place differently. A **street
+   address** must show two independent signals, a street-type marker *and* a
+   house number or `s/n` — a marker alone matches `Cl@ve PIN`, the tax agency's
+   login system, and any sentence opening with "Plaza". A **Código Seguro de
+   Verificación** is the only recognizer that *requires* context: its shape is
+   shared with cadastral references and hashes, so the announcing words have to
+   be nearby. Once confirmed anywhere in a document, the same code is redacted
+   at its other occurrences too, which is how the copy on the signature page —
+   where nothing announces it — stops shipping the credential.
+2. **Statistical NER** (`server/ner_es.py`) — spaCy models for person and
+   location. Multiple language models load in parallel; the text is split into
+   paragraph blocks and each block is routed to the model that matches its
+   detected language, so a Spanish model never tags Catalan common words as
+   names (and vice versa) in a bilingual document.
+
+   Every block is analysed **twice over, and at two granularities**. All-caps
+   runs are title-cased for a second pass, because the models are case-sensitive
+   and return fragments for a name written in capitals. And each line is
+   analysed on its own as well as within its paragraph: in a form the adjacent
+   lines are unrelated fields, and at paragraph level the model merges them into
+   one entity that the lexicon then rejects wholesale — which is how a name in a
+   page header went undetected in ten of its eleven occurrences before this.
+
+   A false-positive filter drops section headings, form labels, public
+   institutions/regions (not personal data), URLs, tax and accounting
+   vocabulary, file names and OCR garbage, and trims role words off both ends
+   (`Mateo Ruiz Cano Domicilio` → `Mateo Ruiz Cano`). A lone capitalised word
+   needs a person trigger in front of it to count as a name, and conversely a
+   surname that collides with contract vocabulary — "Banco", "Construcción" and
+   "Contrato" are real Spanish surnames — is rescued when one does.
 
 `server/pipeline.py` merges the three sources (deterministic > opf > NER on
 overlap) and applies the consistent pseudonymisation.
@@ -193,7 +232,8 @@ they're effectively optional but strongly recommended for Spanish/Catalan docs.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PF_NER_MODELS` | `es_core_news_lg,ca_core_news_lg` | spaCy models to load (comma-separated) |
-| `PF_NER_LABELS` | `PER,LOC,ORG` | Entity types to keep from NER |
+| `PF_NER_LABELS` | `PER,LOC` | Entity types to keep from NER. Add `ORG` to redact company and institution names too — off by default because an entity name keeps the document readable and rarely protects a natural person |
+| `PF_REDACT_ALL_DATES` | `0` | Redact every date instead of only dates of birth. Off by default: an acquisition or transmission date is what a tax computation rests on |
 | `PF_OCR_LANG` | `spa+eng` | Tesseract languages (use `spa+cat+eng` for bilingual) |
 | `PF_OCR_DPI` | `300` | Rasterisation DPI for scanned pages |
 | `PF_RESERVED_CORES` | `2` | CPU cores always kept free for the host |
