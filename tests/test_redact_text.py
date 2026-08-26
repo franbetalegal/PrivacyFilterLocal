@@ -17,7 +17,11 @@ sys.path.insert(0, str(ROOT / "privacy-filter"))
 
 
 def _checkpoint_is_available() -> bool:
-    model_dir = Path.home() / ".opf" / "privacy_filter"
+    # Same directory the loader will use: checkpoint_dir() honours
+    # OPF_CHECKPOINT, a hardcoded ~/.opf path does not.
+    from server.inference import checkpoint_dir
+
+    model_dir = checkpoint_dir()
     if not model_dir.is_dir():
         return False
     if not (model_dir / "config.json").is_file():
