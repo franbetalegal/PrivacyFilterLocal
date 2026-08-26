@@ -48,7 +48,7 @@ export default function MarkdownTab() {
     const ok = window.confirm(
       "AVISO: este archivo Markdown NO está anonimizado y puede contener " +
         "datos personales del documento original.\n\n" +
-        "No lo pegues en una IA externa ni lo compartas fuera de tu equipo sin " +
+        "No lo pegue en una IA externa ni lo comparta fuera de su equipo sin " +
         "revisarlo antes.\n\n¿Descargar de todas formas?",
     );
     if (!ok) e.preventDefault();
@@ -65,9 +65,9 @@ export default function MarkdownTab() {
       <div className="warning md-warning">
         <strong>⚠ Este resultado NO está anonimizado.</strong>
         <br />
-        El .md conserva todos los datos del original. No lo pegues en una IA
-        externa ni lo compartas fuera del despacho sin revisar. Si necesitas una
-        versión anónima, usa la pestaña <em>Files</em> con la opción
+        El .md conserva todos los datos del original. No lo pegue en una IA
+        externa ni lo comparta fuera del despacho sin revisar. Si necesita una
+        versión anónima, use la pestaña <em>Archivos</em> con la opción
         «Convertir también a Markdown».
       </div>
 
@@ -118,7 +118,7 @@ export default function MarkdownTab() {
             </a>
           </p>
           <p className="muted">
-            Al pulsar «Descargar» se te pedirá confirmar, porque el archivo
+            Al pulsar «Descargar» se le pedirá confirmar, porque el archivo
             contiene los datos originales sin anonimizar.
           </p>
         </div>

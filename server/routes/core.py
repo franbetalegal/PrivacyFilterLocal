@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from server import downloads, inference, redaction
+from server import messages
 
 logger = logging.getLogger("privacy_filter")
 
@@ -176,6 +177,13 @@ async def api_redact(req: RedactRequest) -> dict:
     result = await inference.redact(text, mode=req.mode)
     elapsed = time.time() - start
     payload = result.to_dict()
+    # ``to_dict`` carries opf's own English prose in "warning". Replace it with
+    # the coded form so the backend never ships user-facing text; the Spanish
+    # sentence is built in frontend/src/messages.ts.
+    if payload.pop("warning", None):
+        payload["warnings"] = [messages.message(messages.TOKENIZER_DECODE_MISMATCH)]
+    else:
+        payload["warnings"] = []
     payload["elapsed"] = round(elapsed, 3)
     payload["mode"] = req.mode
     return payload
@@ -205,7 +213,10 @@ async def api_redact_file(
     t_total_start = time.time()
     ext = Path(file.filename or "").suffix.lower()
     if ext not in TEXT_EXTS and ext not in DOC_EXTS:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
+        raise HTTPException(
+            status_code=400,
+            detail=messages.message(messages.UNSUPPORTED_FILE_TYPE, ext=ext),
+        )
 
     # Persist the upload to a temp file (PyMuPDF/python-docx need a path).
     fd, in_path = tempfile.mkstemp(suffix=ext, prefix="upload_")
@@ -222,12 +233,18 @@ async def api_redact_file(
             text = await inference.run_blocking(
                 redaction.extract_text_from_pdf, in_path)
             if text is None:
-                raise HTTPException(status_code=422, detail="Could not read PDF.")
+                raise HTTPException(
+                    status_code=422,
+                    detail=messages.message(messages.PDF_UNREADABLE),
+                )
         elif ext == ".docx":
             text = await inference.run_blocking(
                 redaction.extract_text_from_docx, in_path)
             if text is None:
-                raise HTTPException(status_code=422, detail="Could not read DOCX.")
+                raise HTTPException(
+                    status_code=422,
+                    detail=messages.message(messages.DOCX_UNREADABLE),
+                )
         else:
             text = Path(in_path).read_text(encoding="utf-8", errors="replace")
         t_extract = time.time() - t_extract_start
@@ -315,23 +332,19 @@ async def api_redact_file(
                 )
 
         payload = result.to_dict()
-        warning = payload.get("warning")
+        warnings: list[dict] = []
+        if payload.get("warning"):
+            warnings.append(messages.message(messages.TOKENIZER_DECODE_MISMATCH))
         if leaked:
-            leak_msg = (
-                f"Se detectaron {len(leaked)} fragmento(s) de PII que no pudieron "
-                "eliminarse del documento anonimizado. Revise el resultado antes de compartirlo."
+            warnings.append(
+                messages.message(messages.LEAK_DETECTED, count=len(leaked))
             )
-            warning = f"{warning}\n{leak_msg}" if warning else leak_msg
         elif download_token and not verified:
             # Never let an empty leak list read as "verified clean" when the
             # check could not see the page content at all.
-            blind_msg = (
-                "No se pudo verificar el documento anonimizado: procede de un "
-                "escaneado y la copia resultante no tiene capa de texto, así que "
-                "no es posible comprobar automáticamente si algún dato sobrevive "
-                "dentro de la imagen. Revíselo manualmente antes de compartirlo."
+            warnings.append(
+                messages.message(messages.VERIFICATION_UNAVAILABLE_SCANNED)
             )
-            warning = f"{warning}\n{blind_msg}" if warning else blind_msg
         total = time.time() - t_total_start
         logger.info(
             "TIMING total=%.2fs (extract=%.2f detect=%.2f redact=%.2f verify=%.2f)",
@@ -340,7 +353,7 @@ async def api_redact_file(
         return {
             "detected_spans": payload["detected_spans"],
             "summary": payload["summary"],
-            "warning": warning,
+            "warnings": warnings,
             "leaked_pii_count": len(leaked),
             # True end-to-end wall time. Previously this only covered detection,
             # which on a scanned file hid more than half the wait.
@@ -393,14 +406,17 @@ async def api_redact_file_apply(
     if ext not in DOC_EXTS:
         raise HTTPException(
             status_code=400,
-            detail=f"Apply endpoint only supports PDF/DOCX (got {ext}).",
+            detail=messages.message(messages.APPLY_REQUIRES_PDF_OR_DOCX, ext=ext),
         )
     try:
         raw_spans = json.loads(spans_json)
         if not isinstance(raw_spans, list):
             raise ValueError("spans_json must be a JSON array")
     except (json.JSONDecodeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid spans_json: {exc}")
+        raise HTTPException(
+            status_code=400,
+            detail=messages.message(messages.INVALID_SPANS_JSON, error=str(exc)),
+        )
 
     spans = [_SpanFromClient(**s) for s in raw_spans]
 
@@ -444,11 +460,10 @@ async def api_redact_file_apply(
                 fallback_text=fallback,
             )
 
-        warning = None
+        warnings: list[dict] = []
         if leaked:
-            warning = (
-                f"Se detectaron {len(leaked)} fragmento(s) de PII que no pudieron "
-                "eliminarse. Revise el resultado antes de compartirlo."
+            warnings.append(
+                messages.message(messages.LEAK_DETECTED, count=len(leaked))
             )
 
         # Optionally keep the reviewer's curated spans as a gold-set example
@@ -481,7 +496,7 @@ async def api_redact_file_apply(
             "markdown_name": markdown_name,
             "applied_span_count": len(spans),
             "leaked_pii_count": len(leaked),
-            "warning": warning,
+            "warnings": warnings,
             "elapsed": round(time.time() - t_total_start, 3),
             "captured": captured,
         }
@@ -496,7 +511,10 @@ def api_download(token: str) -> FileResponse:
     """Stream a redacted output file once, then delete it from disk."""
     entry = downloads.pop(token)
     if not entry or not os.path.exists(entry[0]):
-        raise HTTPException(status_code=404, detail="File not found or expired.")
+        raise HTTPException(
+            status_code=404,
+            detail=messages.message(messages.FILE_NOT_FOUND_OR_EXPIRED),
+        )
     path, download_name = entry
     return FileResponse(
         path,

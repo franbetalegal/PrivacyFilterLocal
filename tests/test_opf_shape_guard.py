@@ -19,7 +19,7 @@ from server.pipeline import _opf_shape_is_plausible
 # --- the artifacts observed on the real document --------------------------
 
 @pytest.mark.parametrize(
-    "artefacto",
+    "artifact",
     [
         ")+(578)+(579)+(581)]",
         ")+(568)+(582)+(572)+(573)+(574)+(576)]",
@@ -28,12 +28,12 @@ from server.pipeline import _opf_shape_is_plausible
         "+ 123.456,78",
     ],
 )
-def test_los_artefactos_del_pdf_no_pasan_como_telefono(artefacto):
-    assert _opf_shape_is_plausible("private_phone", artefacto) is False
+def test_pdf_artifacts_do_not_pass_as_a_phone(artifact):
+    assert _opf_shape_is_plausible("private_phone", artifact) is False
 
 
 @pytest.mark.parametrize(
-    "telefono",
+    "phone",
     [
         "612 04 87 39",
         "912345678",
@@ -43,12 +43,12 @@ def test_los_artefactos_del_pdf_no_pasan_como_telefono(artefacto):
         "612-04-87-39",
     ],
 )
-def test_los_telefonos_reales_siguen_pasando(telefono):
-    assert _opf_shape_is_plausible("private_phone", telefono) is True
+def test_real_phone_numbers_still_pass(phone):
+    assert _opf_shape_is_plausible("private_phone", phone) is True
 
 
 @pytest.mark.parametrize(
-    "no_telefono",
+    "not_a_phone",
     [
         "1234",              # too few digits
         "1234567890123456",  # too many
@@ -58,43 +58,43 @@ def test_los_telefonos_reales_siguen_pasando(telefono):
         "",
     ],
 )
-def test_lo_que_no_es_telefono_se_rechaza(no_telefono):
-    assert _opf_shape_is_plausible("private_phone", no_telefono) is False
+def test_non_phone_values_are_rejected(not_a_phone):
+    assert _opf_shape_is_plausible("private_phone", not_a_phone) is False
 
 
 # --- account numbers -----------------------------------------------------
 
 @pytest.mark.parametrize(
-    "cuenta",
+    "account",
     [
         "1234567890123456789",
         "ES9120858371440301827465",
         "2085 8371 44 0301827465",
     ],
 )
-def test_las_cuentas_reales_pasan(cuenta):
-    assert _opf_shape_is_plausible("account_number", cuenta) is True
+def test_real_account_numbers_pass(account):
+    assert _opf_shape_is_plausible("account_number", account) is True
 
 
 @pytest.mark.parametrize(
-    "no_cuenta",
-    ["123.456,78", "saldo pendiente de la cuenta", "123"],
+    "not_an_account",
+    ["123.456,78", "saldo pendiente de la account", "123"],
 )
-def test_lo_que_no_es_cuenta_se_rechaza(no_cuenta):
-    assert _opf_shape_is_plausible("account_number", no_cuenta) is False
+def test_non_account_values_are_rejected(not_an_account):
+    assert _opf_shape_is_plausible("account_number", not_an_account) is False
 
 
 # --- email and url -------------------------------------------------------
 
-def test_email_y_url():
+def test_email_and_url():
     assert _opf_shape_is_plausible("private_email", "zurine@correo.example") is True
     assert _opf_shape_is_plausible("private_email", "sin arroba") is False
     assert _opf_shape_is_plausible("private_email", "a@b") is False
     assert _opf_shape_is_plausible("private_url", "https://sede.example/tramite") is True
-    assert _opf_shape_is_plausible("private_url", "texto con espacios") is False
+    assert _opf_shape_is_plausible("private_url", "text con espacios") is False
 
 
-def test_las_etiquetas_sin_forma_definida_pasan_siempre():
+def test_labels_without_a_defined_shape_always_pass():
     # secret has no characteristic shape; an unknown future label must not be
     # silently dropped either.
     assert _opf_shape_is_plausible("secret", "cualquier cosa (rara)") is True
@@ -103,7 +103,7 @@ def test_las_etiquetas_sin_forma_definida_pasan_siempre():
 
 # --- ORG default ---------------------------------------------------------
 
-def test_org_esta_desactivada_por_defecto():
+def test_org_is_disabled_by_default():
     # Policy: entity names stay in the clear so the document keeps its meaning.
     if os.environ.get("PF_NER_LABELS"):
         pytest.skip("PF_NER_LABELS overridden in this environment")
@@ -115,7 +115,7 @@ def test_org_esta_desactivada_por_defecto():
 # --- ORG rerouted to PER when the context says person ---------------------
 
 @pytest.mark.parametrize(
-    "texto,contexto,esperado",
+    "text,context,expected",
     [
         # spaCy tags all-caps names as ORG; the trigger disambiguates.
         ("HERMENEGILDA LOSTAU BIZKARRA", "COMPARECENCIA DE ", "PER"),
@@ -132,41 +132,41 @@ def test_org_esta_desactivada_por_defecto():
         ("Hacienda", "El compareciente ", None),
     ],
 )
-def test_org_se_reencamina_a_persona_solo_con_disparador(texto, contexto, esperado):
+def test_org_is_rerouted_to_person_only_with_a_trigger(text, context, expected):
     if os.environ.get("PF_NER_LABELS"):
         pytest.skip("PF_NER_LABELS overridden in this environment")
-    assert ner_es._resolve_label("ORG", texto, contexto) == esperado
+    assert ner_es._resolve_label("ORG", text, context) == expected
 
 
-def test_las_etiquetas_activas_pasan_sin_tocar():
+def test_enabled_labels_pass_through_untouched():
     assert ner_es._resolve_label("PER", "Cualquier Nombre", "") == "PER"
     assert ner_es._resolve_label("LOC", "Algun Sitio", "") == "LOC"
 
 
-def test_una_etiqueta_desactivada_que_no_es_org_se_descarta():
+def test_a_disabled_non_org_label_is_dropped():
     assert ner_es._resolve_label("MISC", "Algo Raro", "El compareciente ") is None
 
 
 # --- all-caps case normalisation ------------------------------------------
 
-def test_normaliza_las_rachas_en_mayusculas_conservando_longitud():
+def test_all_caps_runs_are_normalised_preserving_length():
     original = "COMPARECENCIA DE HERMENEGILDA LOSTAU BIZKARRA - ACTA NUMERO 77"
-    normalizado = ner_es.normalize_allcaps_runs(original)
-    assert normalizado is not None
+    normalised = ner_es.normalize_allcaps_runs(original)
+    assert normalised is not None
     # Length must be preserved: offsets from the normalised view index straight
     # back into the original text.
-    assert len(normalizado) == len(original)
-    assert "Hermenegilda Lostau Bizkarra" in normalizado
+    assert len(normalised) == len(original)
+    assert "Hermenegilda Lostau Bizkarra" in normalised
 
 
-def test_no_normaliza_lo_que_no_tiene_rachas_en_mayusculas():
+def test_text_without_all_caps_runs_is_not_normalised():
     assert ner_es.normalize_allcaps_runs("El compareciente acepta las condiciones") is None
     # A single all-caps word is not a run.
     assert ner_es.normalize_allcaps_runs("El DNI del interesado") is None
 
 
-def test_la_normalizacion_conserva_longitud_en_texto_acentuado():
+def test_normalisation_preserves_length_on_accented_text():
     original = "DOÑA MARÍA ÍÑIGUEZ AÑÓN COMPARECE"
-    normalizado = ner_es.normalize_allcaps_runs(original)
-    assert normalizado is not None
-    assert len(normalizado) == len(original)
+    normalised = ner_es.normalize_allcaps_runs(original)
+    assert normalised is not None
+    assert len(normalised) == len(original)

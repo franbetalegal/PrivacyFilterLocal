@@ -52,7 +52,7 @@ export default function DictionaryTab() {
   async function onAdd() {
     const value = term.trim();
     if (!value) {
-      setError("Escribe un término.");
+      setError("Escriba un término.");
       return;
     }
     setSaving(true);
@@ -119,7 +119,7 @@ export default function DictionaryTab() {
         Términos que se anonimizarán <strong>siempre</strong>, además de lo que
         detecta el modelo. Ideal para las partes del asunto y nombres de empresa
         que conviene ocultar sin depender de la detección automática. El
-        diccionario se guarda en tu equipo y puedes exportarlo para compartirlo.
+        diccionario se guarda en su equipo y puede exportarlo para compartirlo.
       </p>
 
       <div className="dict-form">
@@ -201,7 +201,7 @@ export default function DictionaryTab() {
         <p className="muted">Cargando…</p>
       ) : terms.length === 0 ? (
         <p className="muted">
-          Aún no hay términos. Añade el primero arriba.
+          Aún no hay términos. Añada el primero arriba.
         </p>
       ) : (
         <table className="dict-table">

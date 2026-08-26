@@ -1,3 +1,4 @@
+import { renderErrorDetail, type MessageRef } from './messages';
 // Typed client for the Privacy Filter FastAPI backend.
 
 export interface DetectedSpan {
@@ -23,7 +24,7 @@ export interface RedactTextResult {
   redacted_text: string;
   detected_spans: DetectedSpan[];
   summary?: Record<string, unknown>;
-  warning?: string | null;
+  warnings?: MessageRef[];
   elapsed: number;
   empty?: boolean;
   mode?: Mode;
@@ -41,7 +42,7 @@ export interface StageTimings {
 export interface RedactFileResult {
   detected_spans: DetectedSpan[];
   summary?: Record<string, unknown>;
-  warning?: string | null;
+  warnings?: MessageRef[];
   elapsed: number;
   download_token: string | null;
   download_name: string | null;
@@ -65,7 +66,7 @@ export interface ApplyRedactionResult {
   markdown_name?: string | null;
   applied_span_count: number;
   leaked_pii_count: number;
-  warning?: string | null;
+  warnings?: MessageRef[];
   elapsed?: number;
   timings?: StageTimings;
   verified?: boolean;
@@ -95,14 +96,16 @@ export interface UpdatesInfo {
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    let detail = res.statusText;
+    // The backend answers with {code, params}; the Spanish sentence is built
+    // here so every caller can show `error.message` directly.
+    let detail: unknown = null;
     try {
       const body = await res.json();
-      detail = body.detail ?? detail;
+      detail = body.detail ?? null;
     } catch {
-      /* ignore */
+      /* a non-JSON body leaves detail null and the status text is used */
     }
-    throw new Error(detail);
+    throw new Error(renderErrorDetail(detail, res.statusText));
   }
   return res.json() as Promise<T>;
 }

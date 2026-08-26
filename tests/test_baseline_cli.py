@@ -15,7 +15,7 @@ from server.dataset import Example, GoldSpan
 from server.evaluation import EvalReport, Leak
 
 
-def _report_con_fuga() -> EvalReport:
+def _report_with_leak() -> EvalReport:
     return EvalReport(
         overall={"precision": 0.5, "recall": 0.5, "f1": 0.5},
         exact={"precision": 0.25, "recall": 0.25, "f1": 0.25},
@@ -28,35 +28,35 @@ def _report_con_fuga() -> EvalReport:
     )
 
 
-def test_informe_seguro_cuenta_las_fugas_sin_revelar_el_texto():
-    seguro = baseline_cli._informe_seguro(_report_con_fuga())
+def test_safe_report_counts_leaks_without_revealing_text():
+    safe = baseline_cli._safe_report(_report_with_leak())
 
-    assert seguro["leak_count"] == 1
-    serializado = json.dumps(seguro, ensure_ascii=False)
-    assert "Melitona" not in serializado
-    assert "Zarrabeitia" not in serializado
-    assert "leaks" not in seguro
-
-
-def test_informe_seguro_conserva_las_metricas():
-    seguro = baseline_cli._informe_seguro(_report_con_fuga())
-
-    assert seguro["mode"] == "balanced"
-    assert seguro["examples"] == 3
-    assert seguro["overall"]["f1"] == 0.5
-    assert seguro["exact"]["f1"] == 0.25
-    assert seguro["by_label"]["NOMBRE"]["gold"] == 2
+    assert safe["leak_count"] == 1
+    serialised = json.dumps(safe, ensure_ascii=False)
+    assert "Melitona" not in serialised
+    assert "Zarrabeitia" not in serialised
+    assert "leaks" not in safe
 
 
-def test_tabla_no_incluye_texto_de_ejemplo_ni_de_fuga():
-    tabla = baseline_cli._render_tabla([_informe := baseline_cli._informe_seguro(_report_con_fuga())])
+def test_safe_report_keeps_the_metrics():
+    safe = baseline_cli._safe_report(_report_with_leak())
 
-    assert "Melitona" not in tabla
-    assert "NOMBRE" in tabla
-    assert "balanced" in tabla
+    assert safe["mode"] == "balanced"
+    assert safe["examples"] == 3
+    assert safe["overall"]["f1"] == 0.5
+    assert safe["exact"]["f1"] == 0.25
+    assert safe["by_label"]["NOMBRE"]["gold"] == 2
 
 
-def test_soporte_bajo_se_marca_como_no_concluyente():
+def test_table_excludes_example_and_leak_text():
+    table = baseline_cli._render_table([_informe := baseline_cli._safe_report(_report_with_leak())])
+
+    assert "Melitona" not in table
+    assert "NOMBRE" in table
+    assert "balanced" in table
+
+
+def test_low_support_is_flagged_as_inconclusive():
     report = EvalReport(
         overall={"precision": 1.0, "recall": 1.0, "f1": 1.0},
         exact={"precision": 1.0, "recall": 1.0, "f1": 1.0},
@@ -66,22 +66,22 @@ def test_soporte_bajo_se_marca_como_no_concluyente():
         },
         mode="balanced",
     )
-    seguro = baseline_cli._informe_seguro(report)
+    safe = baseline_cli._safe_report(report)
 
-    assert seguro["by_label"]["ESCASO"]["poco_soporte"] is True
-    assert seguro["by_label"]["SUFICIENTE"]["poco_soporte"] is False
+    assert safe["by_label"]["ESCASO"]["low_support"] is True
+    assert safe["by_label"]["SUFICIENTE"]["low_support"] is False
 
 
-def test_carga_el_corpus_sintetico_del_repositorio():
-    ejemplos = baseline_cli.cargar_ejemplos(baseline_cli.CORPUS_SINTETICO)
+def test_loads_the_repository_synthetic_corpus():
+    examples = baseline_cli.load_examples(baseline_cli.SYNTHETIC_CORPUS)
 
     # Deliberately not an exact count: the corpus grows as new failure patterns
     # are found, and a hardcoded number turns every addition into a test edit.
-    assert len(ejemplos) >= 30
-    assert all(isinstance(ex, Example) for ex in ejemplos)
-    con_spans = [ex for ex in ejemplos if ex.spans]
-    assert con_spans, "the corpus must carry annotated spans"
-    for ex in con_spans:
+    assert len(examples) >= 30
+    assert all(isinstance(ex, Example) for ex in examples)
+    with_spans = [ex for ex in examples if ex.spans]
+    assert with_spans, "the corpus must carry annotated spans"
+    for ex in with_spans:
         for span in ex.spans:
             assert isinstance(span, GoldSpan)
             # Offsets must actually address the text they claim to.

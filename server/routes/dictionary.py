@@ -6,6 +6,7 @@ import json
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
+from server import messages
 
 router = APIRouter()
 
@@ -72,7 +73,7 @@ def api_dictionary_update(entry_id: str, patch: DictEntryPatch) -> dict:
             raise HTTPException(status_code=400, detail=err)
     updated = custom_dict.get_store().update(entry_id, **fields)
     if updated is None:
-        raise HTTPException(status_code=404, detail="Término no encontrado.")
+        raise HTTPException(status_code=404, detail=messages.message(messages.TERM_NOT_FOUND))
     return updated.to_dict()
 
 
@@ -82,7 +83,7 @@ def api_dictionary_delete(entry_id: str) -> dict:
     from server import custom_dict
 
     if not custom_dict.get_store().remove(entry_id):
-        raise HTTPException(status_code=404, detail="Término no encontrado.")
+        raise HTTPException(status_code=404, detail=messages.message(messages.TERM_NOT_FOUND))
     return {"removed": entry_id}
 
 

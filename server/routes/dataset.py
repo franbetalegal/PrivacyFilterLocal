@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from server import inference
+from server import messages
 
 router = APIRouter()
 
@@ -55,7 +56,7 @@ async def api_dataset_evaluate(payload: EvaluateIn) -> dict:
 
     examples = dataset.get_store().load_examples()
     if not examples:
-        return {"examples": 0, "detail": "El gold set está vacío."}
+        return {"examples": 0, "detail": messages.message(messages.GOLD_SET_EMPTY)}
     # Detection must go through the model, which is async and serialized on the
     # inference pool; gather results first, then score synchronously.
     results = []

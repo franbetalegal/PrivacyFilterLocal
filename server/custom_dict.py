@@ -38,6 +38,7 @@ from typing import Iterable
 
 from server import PROJECT_DIR
 from server.recognizers_es import Recognition
+from server import messages
 
 # --------------------------------------------------------------------------
 #  Storage location
@@ -162,12 +163,12 @@ class Entry:
 def validate_entry(term: str, match: str) -> str | None:
     """Return an error message if the entry is unusable, else ``None``."""
     if not term or not term.strip():
-        return "El término no puede estar vacío."
+        return messages.message(messages.TERM_EMPTY)
     if match == "regex":
         try:
             re.compile(term)
         except re.error as exc:
-            return f"Expresión regular no válida: {exc}"
+            return messages.message(messages.INVALID_REGEX, error=str(exc))
     return None
 
 

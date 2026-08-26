@@ -18,12 +18,12 @@ type TabKey =
   | "info";
 
 const TABS: { key: TabKey; label: string }[] = [
-  { key: "text", label: "Text" },
-  { key: "files", label: "Files" },
+  { key: "text", label: "Texto" },
+  { key: "files", label: "Archivos" },
   { key: "markdown", label: "Markdown" },
   { key: "dictionary", label: "Diccionario" },
   { key: "evaluation", label: "Evaluación" },
-  { key: "info", label: "Info" },
+  { key: "info", label: "Información" },
 ];
 
 export default function App() {
@@ -35,7 +35,7 @@ export default function App() {
   useEffect(() => {
     getVersion()
       .then(setVersion)
-      .catch(() => setVersion("unknown"));
+      .catch(() => setVersion("desconocida"));
   }, []);
 
   // Poll health until the backend is ready (model not downloading / no error).
@@ -77,8 +77,8 @@ export default function App() {
     return (
       <div className="app">
         <div className="prepare">
-          <h2>Server stopped</h2>
-          <p className="muted">You can close this window.</p>
+          <h2>Servidor detenido</h2>
+          <p className="muted">Ya puede cerrar esta ventana.</p>
         </div>
       </div>
     );
@@ -102,15 +102,21 @@ export default function App() {
           <div>
             <h1>Privacy Filter — Local</h1>
             <p className="subtitle">
-              100% local PII detection{version ? ` · v${version}` : ""}
+              Detección de datos personales 100% local
+              {version ? ` · v${version}` : ""}
             </p>
           </div>
           <div className="header-actions">
-            <a className="btn" href={DIAGNOSTICS_URL} download title="Download a support bundle">
-              Diagnostics
+            <a
+              className="btn"
+              href={DIAGNOSTICS_URL}
+              download
+              title="Descargar un paquete de diagnóstico para soporte"
+            >
+              Diagnóstico
             </a>
-            <button className="btn" onClick={onQuit} title="Stop the local server">
-              Quit
+            <button className="btn" onClick={onQuit} title="Detener el servidor local">
+              Salir
             </button>
           </div>
         </div>

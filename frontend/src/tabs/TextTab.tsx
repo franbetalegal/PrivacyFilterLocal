@@ -12,12 +12,12 @@ import ModeSelector from "../components/ModeSelector";
 import Processing from "../components/Processing";
 
 const FIRST_RUN_HINT =
-  "The first run loads the model and can take ~30s. After that it is fast.";
+  "La primera ejecución carga el modelo y puede tardar unos 30 s. Después es rápida.";
 
 const EXAMPLES = [
-  "Hi, I'm John Smith. My email is john.smith@example.com and my SSN is 123-45-6789.",
-  "Call me at +1 555 987 6543 or email support@company.org",
-  "The meeting is on 03/15/2026. Account: 4532-1234-5678-9012",
+  "Buenos días, soy Marta Ruiz Alonso. Mi correo es marta.ruiz@ejemplo.es y mi DNI es 12345678Z.",
+  "Puede llamarme al +34 611 22 33 44 o escribir a soporte@empresa.es",
+  "La reunión es el 15/03/2026. Cuenta: ES91 2100 0418 4502 0005 1332",
 ];
 
 export default function TextTab() {
@@ -45,7 +45,7 @@ export default function TextTab() {
 
   async function onDetect() {
     if (!text.trim()) {
-      setError("Enter some text.");
+      setError("Introduzca algún texto.");
       return;
     }
     const controller = new AbortController();
@@ -91,18 +91,18 @@ export default function TextTab() {
     <div className="tab-content">
       <div className="two-col">
         <div className="col">
-          <label htmlFor="input">Text to analyze</label>
+          <label htmlFor="input">Texto a analizar</label>
           <textarea
             id="input"
             rows={6}
             value={text}
             disabled={loading}
-            placeholder="My name is John, email: john@example.com, phone: +1 555 123 4567"
+            placeholder="Me llamo Ana Gil, correo: ana.gil@ejemplo.es, teléfono: +34 611 22 33 44"
             onChange={(e) => setText(e.target.value)}
           />
         </div>
         <div className="col">
-          <label htmlFor="output">Redacted output</label>
+          <label htmlFor="output">Resultado anonimizado</label>
           <textarea id="output" rows={6} value={redacted} readOnly />
         </div>
       </div>
@@ -111,17 +111,17 @@ export default function TextTab() {
 
       <div className="row">
         <button className="btn primary" onClick={onDetect} disabled={loading}>
-          {loading ? "Detecting…" : "Detect PII"}
+          {loading ? "Detectando…" : "Detectar datos personales"}
         </button>
         {loading && (
           <button className="btn" onClick={onCancel}>
-            Cancel
+            Cancelar
           </button>
         )}
         <div className="examples">
           {EXAMPLES.map((ex, i) => (
             <button key={i} className="chip" onClick={() => setText(ex)}>
-              Example {i + 1}
+              Ejemplo {i + 1}
             </button>
           ))}
         </div>
@@ -129,7 +129,7 @@ export default function TextTab() {
 
       {loading && (
         <Processing
-          label="Detecting PII…"
+          label="Detectando datos personales…"
           hint={!modelReady ? FIRST_RUN_HINT : undefined}
         />
       )}
@@ -141,7 +141,7 @@ export default function TextTab() {
           {spans.length > 0 ? (
             <>
               <p>
-                <strong>{spans.length} entities detected</strong>
+                <strong>{spans.length} entidad(es) detectada(s)</strong>
                 {elapsed != null ? ` (${elapsed.toFixed(1)}s)` : ""}
               </p>
               <SpanList spans={spans} />
@@ -149,7 +149,7 @@ export default function TextTab() {
                 <button
                   className="btn"
                   onClick={onSaveExample}
-                  title="Guarda este texto y sus entidades como ejemplo para medir la precisión (se queda en tu equipo)."
+                  title="Guarda este texto y sus entidades como ejemplo para medir la precisión (se queda en su equipo)."
                 >
                   Guardar como ejemplo de evaluación
                 </button>
@@ -158,7 +158,8 @@ export default function TextTab() {
             </>
           ) : (
             <p className="muted">
-              No PII entities detected{elapsed != null ? ` (${elapsed.toFixed(1)}s)` : ""}.
+              No se han detectado datos personales
+              {elapsed != null ? ` (${elapsed.toFixed(1)}s)` : ""}.
             </p>
           )}
         </div>

@@ -1,6 +1,6 @@
 /** Visual "working" indicator: spinner + indeterminate bar + optional hint. */
 export default function Processing({
-  label = "Processing…",
+  label = "Procesando…",
   hint,
 }: {
   label?: string;

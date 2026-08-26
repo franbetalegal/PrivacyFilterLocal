@@ -10,7 +10,7 @@ Usage::
 
     .venv/bin/python -m server.baseline_cli                    # synthetic corpus
     .venv/bin/python -m server.baseline_cli --dataset data/gold.jsonl
-    .venv/bin/python -m server.baseline_cli --json informe.json
+    .venv/bin/python -m server.baseline_cli --json report.json
 
 The default dataset is the synthetic corpus committed under ``tests/fixtures``,
 which contains no real personal data. Pointing ``--dataset`` at a gold store
@@ -19,7 +19,7 @@ built from real documents is supported and safe: the report deliberately omits
 reports only how many leaks were found. Do not add example text to the output.
 
 Interpreting the table: a label whose gold count is below
-``SOPORTE_MINIMO`` is marked ``poco soporte``. Its F1 is arithmetic, not
+``MIN_SUPPORT`` is marked ``low support``. Its F1 is arithmetic, not
 evidence — do not tune anything on the strength of a handful of spans.
 """
 
@@ -35,37 +35,37 @@ from server import PROJECT_DIR
 from server.dataset import Example, GoldStore
 from server.evaluation import EvalReport, score_examples
 
-CORPUS_SINTETICO = PROJECT_DIR / "tests" / "fixtures" / "gold_sintetico.jsonl"
+SYNTHETIC_CORPUS = PROJECT_DIR / "tests" / "fixtures" / "synthetic_gold.jsonl"
 
-MODOS = ("conservative", "balanced", "aggressive")
+MODES = ("conservative", "balanced", "aggressive")
 
 # Below this many gold spans a per-label metric is noise, not signal.
-SOPORTE_MINIMO = 10
+MIN_SUPPORT = 10
 
 
-def cargar_ejemplos(path: Path) -> list[Example]:
+def load_examples(path: Path) -> list[Example]:
     """Load labelled examples from a JSONL gold store."""
     if not path.exists():
         raise FileNotFoundError(f"dataset not found: {path}")
     return GoldStore(path).load_examples()
 
 
-def _informe_seguro(report: EvalReport) -> dict:
+def _safe_report(report: EvalReport) -> dict:
     """Project an EvalReport onto the fields that are safe to print.
 
     Everything derived from document text is dropped. ``EvalReport.leaks``
     entries carry the original PII in ``Leak.text``; only the count survives.
     """
     by_label: dict[str, dict] = {}
-    for label, metricas in report.by_label.items():
-        gold = int(metricas.get("gold", 0))
+    for label, metrics in report.by_label.items():
+        gold = int(metrics.get("gold", 0))
         by_label[label] = {
-            "precision": metricas.get("precision"),
-            "recall": metricas.get("recall"),
-            "f1": metricas.get("f1"),
-            "pred": metricas.get("pred"),
+            "precision": metrics.get("precision"),
+            "recall": metrics.get("recall"),
+            "f1": metrics.get("f1"),
+            "pred": metrics.get("pred"),
             "gold": gold,
-            "poco_soporte": gold < SOPORTE_MINIMO,
+            "low_support": gold < MIN_SUPPORT,
         }
     return {
         "mode": report.mode,
@@ -79,61 +79,61 @@ def _informe_seguro(report: EvalReport) -> dict:
     }
 
 
-async def _redactar_todo(ejemplos: list[Example], modo: str) -> list:
+async def _redact_all(examples: list[Example], mode: str) -> list:
     from server import inference
 
-    resultados = []
-    for ejemplo in ejemplos:
-        resultados.append(await inference.redact(ejemplo.text, modo))
-    return resultados
+    results = []
+    for example in examples:
+        results.append(await inference.redact(example.text, mode))
+    return results
 
 
-def evaluar_modo(ejemplos: list[Example], modo: str) -> dict:
+def evaluate_mode(examples: list[Example], mode: str) -> dict:
     """Run the pipeline over the corpus in one mode and return a safe report."""
-    resultados = asyncio.run(_redactar_todo(ejemplos, modo))
-    return _informe_seguro(score_examples(ejemplos, resultados, mode=modo))
+    results = asyncio.run(_redact_all(examples, mode))
+    return _safe_report(score_examples(examples, results, mode=mode))
 
 
-def _fmt(valor) -> str:
-    return f"{valor:.3f}" if isinstance(valor, (int, float)) else "-"
+def _fmt(value) -> str:
+    return f"{value:.3f}" if isinstance(value, (int, float)) else "-"
 
 
-def _render_tabla(informes: list[dict]) -> str:
-    lineas: list[str] = []
-    for informe in informes:
-        lineas.append("")
-        lineas.append(
-            f"modo {informe['mode']}  "
-            f"ejemplos={informe['examples']}  "
-            f"gold={informe['gold_spans']}  "
-            f"pred={informe['pred_spans']}  "
-            f"fugas={informe['leak_count']}"
+def _render_table(reports: list[dict]) -> str:
+    lines: list[str] = []
+    for report in reports:
+        lines.append("")
+        lines.append(
+            f"mode {report['mode']}  "
+            f"examples={report['examples']}  "
+            f"gold={report['gold_spans']}  "
+            f"pred={report['pred_spans']}  "
+            f"leaks={report['leak_count']}"
         )
-        glob = informe["overall"]
-        exact = informe["exact"]
-        lineas.append(
-            f"  global (solapamiento)  P={_fmt(glob.get('precision'))} "
-            f"R={_fmt(glob.get('recall'))} F1={_fmt(glob.get('f1'))}"
+        overall = report["overall"]
+        exact = report["exact"]
+        lines.append(
+            f"  overall (overlap)  P={_fmt(overall.get('precision'))} "
+            f"R={_fmt(overall.get('recall'))} F1={_fmt(overall.get('f1'))}"
         )
-        lineas.append(
-            f"  global (exacto)        P={_fmt(exact.get('precision'))} "
+        lines.append(
+            f"  overall (exact)    P={_fmt(exact.get('precision'))} "
             f"R={_fmt(exact.get('recall'))} F1={_fmt(exact.get('f1'))}"
         )
-        if informe["by_label"]:
-            lineas.append(f"  {'etiqueta':<16}{'P':>7}{'R':>7}{'F1':>7}{'pred':>7}{'gold':>7}")
-            for label in sorted(informe["by_label"]):
-                m = informe["by_label"][label]
-                aviso = "  poco soporte" if m["poco_soporte"] else ""
-                lineas.append(
+        if report["by_label"]:
+            lines.append(f"  {'label':<16}{'P':>7}{'R':>7}{'F1':>7}{'pred':>7}{'gold':>7}")
+            for label in sorted(report["by_label"]):
+                m = report["by_label"][label]
+                note = "  low support" if m["low_support"] else ""
+                lines.append(
                     f"  {label:<16}"
                     f"{_fmt(m['precision']):>7}"
                     f"{_fmt(m['recall']):>7}"
                     f"{_fmt(m['f1']):>7}"
                     f"{m['pred']:>7}"
                     f"{m['gold']:>7}"
-                    f"{aviso}"
+                    f"{note}"
                 )
-    return "\n".join(lineas)
+    return "\n".join(lines)
 
 
 def main() -> None:
@@ -145,13 +145,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--dataset",
-        default=os.environ.get("PF_GOLD_PATH") or str(CORPUS_SINTETICO),
+        default=os.environ.get("PF_GOLD_PATH") or str(SYNTHETIC_CORPUS),
         help="JSONL gold store (default: the synthetic corpus in tests/fixtures)",
     )
     parser.add_argument(
         "--modes",
-        default=",".join(MODOS),
-        help=f"comma-separated operating modes (default: {','.join(MODOS)})",
+        default=",".join(MODES),
+        help=f"comma-separated operating modes (default: {','.join(MODES)})",
     )
     parser.add_argument(
         "--json",
@@ -161,24 +161,24 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    modos = [m.strip() for m in args.modes.split(",") if m.strip()]
-    desconocidos = [m for m in modos if m not in MODOS]
-    if desconocidos:
-        parser.error(f"unknown mode(s): {', '.join(desconocidos)}")
+    modes = [m.strip() for m in args.modes.split(",") if m.strip()]
+    unknown = [m for m in modes if m not in MODES]
+    if unknown:
+        parser.error(f"unknown mode(s): {', '.join(unknown)}")
 
-    ruta = Path(args.dataset)
-    ejemplos = cargar_ejemplos(ruta)
-    print(f"dataset: {ruta}")
-    print(f"ejemplos: {len(ejemplos)}")
+    path = Path(args.dataset)
+    examples = load_examples(path)
+    print(f"dataset: {path}")
+    print(f"examples: {len(examples)}")
 
-    informes = [evaluar_modo(ejemplos, modo) for modo in modos]
-    print(_render_tabla(informes))
+    reports = [evaluate_mode(examples, mode) for mode in modes]
+    print(_render_table(reports))
 
     if args.json_path:
         Path(args.json_path).write_text(
-            json.dumps(informes, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(reports, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        print(f"\ninforme JSON: {args.json_path}")
+        print(f"\nJSON report: {args.json_path}")
 
 
 if __name__ == "__main__":

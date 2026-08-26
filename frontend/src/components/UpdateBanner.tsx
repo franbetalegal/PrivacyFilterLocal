@@ -21,7 +21,7 @@ export default function UpdateBanner() {
 
   async function onAppUpdate() {
     setBusy(true);
-    setMessage("Updating application…");
+    setMessage("Actualizando la aplicación…");
     try {
       const res = await installAppUpdate();
       setMessage(res.message);
@@ -34,7 +34,7 @@ export default function UpdateBanner() {
 
   async function onModelUpdate() {
     setBusy(true);
-    setMessage("Updating model…");
+    setMessage("Actualizando el modelo…");
     try {
       const res = await installModelUpdate();
       setMessage(res.message);
@@ -57,7 +57,7 @@ export default function UpdateBanner() {
         <div className="banner">
           <div>
             <strong>
-              A new version is available: v{info.app.current_version} → v
+              Hay una nueva versión disponible: v{info.app.current_version} → v
               {info.app.latest_version}
             </strong>
             {info.app.changelog && (
@@ -68,10 +68,10 @@ export default function UpdateBanner() {
           </div>
           <div className="banner-actions">
             <button className="btn primary" onClick={onAppUpdate} disabled={busy}>
-              Update now
+              Actualizar ahora
             </button>
             <button className="btn" onClick={() => setAppDismissed(true)} disabled={busy}>
-              Later
+              Más tarde
             </button>
           </div>
         </div>
@@ -80,22 +80,24 @@ export default function UpdateBanner() {
       {showModel && (
         <div className="banner">
           <div>
-            <strong>New PII model update available</strong>
+            <strong>
+              Hay una actualización del modelo de detección de datos personales
+            </strong>
             <p className="muted">
-              Current: {info.model.current_date ?? "unknown"} → Latest:{" "}
-              {info.model.latest_date ?? "unknown"}
+              Actual: {info.model.current_date ?? "desconocida"} → Última:{" "}
+              {info.model.latest_date ?? "desconocida"}
             </p>
           </div>
           <div className="banner-actions">
             <button className="btn primary" onClick={onModelUpdate} disabled={busy}>
-              Update model
+              Actualizar modelo
             </button>
             <button
               className="btn"
               onClick={() => setModelDismissed(true)}
               disabled={busy}
             >
-              Later
+              Más tarde
             </button>
           </div>
         </div>

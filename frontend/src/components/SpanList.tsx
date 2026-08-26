@@ -29,7 +29,7 @@ export default function SpanList({
       <summary>
         {interactive
           ? `${keptCount} de ${spans.length} entidades marcadas para anonimizar`
-          : `Show ${spans.length} detected entities`}
+          : `Ver ${spans.length} entidad(es) detectada(s)`}
       </summary>
       <table>
         <thead>
@@ -48,9 +48,9 @@ export default function SpanList({
               </th>
             )}
             <th>#</th>
-            <th>Type</th>
+            <th>Tipo</th>
             <th>Original</th>
-            <th>Replacement</th>
+            <th>Sustitución</th>
           </tr>
         </thead>
         <tbody>

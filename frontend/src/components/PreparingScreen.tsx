@@ -6,14 +6,14 @@ export default function PreparingScreen({ health }: { health: Health | null }) {
   if (health?.error) {
     return (
       <div className="prepare">
-        <h2 className="error">Could not prepare the model</h2>
+        <h2 className="error">No se pudo preparar el modelo</h2>
         <p className="muted">{health.error}</p>
         <p className="muted">
-          Check your internet connection and restart the app. If it keeps
-          failing, download the diagnostics and send them for support.
+          Compruebe la conexión a internet y reinicie la aplicación. Si el
+          problema persiste, descargue el diagnóstico y envíelo para soporte.
         </p>
         <a className="btn primary" href={DIAGNOSTICS_URL} download>
-          ⬇ Download diagnostics
+          ⬇ Descargar diagnóstico
         </a>
       </div>
     );
@@ -26,12 +26,15 @@ export default function PreparingScreen({ health }: { health: Health | null }) {
       <div className="prepare">
         <div className="processing-row">
           <span className="spinner" aria-hidden="true" />
-          <span>Preparing the app — downloading the model (first run)…</span>
+          <span>
+            Preparando la aplicación: descargando el modelo (primera
+            ejecución)…
+          </span>
         </div>
         <div className="progress-track">
           <div className="progress-fill" style={{ width: `${pct}%` }} />
         </div>
-        <p className="muted">{pct}% · this happens only once (~2.7 GB).</p>
+        <p className="muted">{pct}% · solo ocurre una vez (~2,7 GB).</p>
       </div>
     );
   }
@@ -41,7 +44,7 @@ export default function PreparingScreen({ health }: { health: Health | null }) {
     <div className="prepare">
       <div className="processing-row">
         <span className="spinner" aria-hidden="true" />
-        <span>Connecting to the local server…</span>
+        <span>Conectando con el servidor local…</span>
       </div>
     </div>
   );

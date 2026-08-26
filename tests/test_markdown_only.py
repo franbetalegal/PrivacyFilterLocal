@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from server import markdown_export
 from server.main import app
+from server import messages
 
 try:
     client = TestClient(app)
@@ -39,7 +40,11 @@ def _upload(name: str, data: bytes, content_type: str = "application/octet-strea
 def test_rejects_unsupported_extension():
     r = _upload("evil.exe", b"MZ\x90\x00")
     assert r.status_code == 400
-    assert "MarkItDown" in r.json()["detail"]
+    # The backend answers with a message code; the Spanish sentence lives in
+    # the frontend (see server/messages.py).
+    detail = r.json()["detail"]
+    assert detail["code"] == messages.MARKDOWN_UNSUPPORTED_FORMAT
+    assert detail["params"]["ext"] == ".exe"
 
 
 def test_txt_roundtrip_returns_download_token(monkeypatch):
@@ -68,7 +73,7 @@ def test_empty_conversion_is_reported_as_422(monkeypatch):
     monkeypatch.setattr(markdown_export, "to_markdown", lambda *a, **kw: "")
     r = _upload("scan.pdf", b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n", content_type="application/pdf")
     assert r.status_code == 422
-    assert "MarkItDown" in r.json()["detail"]
+    assert r.json()["detail"]["code"] == messages.MARKDOWN_NO_TEXT
 
 
 def test_accepts_all_supported_extensions(monkeypatch):
