@@ -28,3 +28,8 @@
 {"text": "Interviene asimismo Purificacion Palencia Sarasola como parte codemandada en el litigio.", "label": [{"category": "NOMBRE", "start": 20, "end": 50}], "grupo": "trampa"}
 {"text": "El Juzgado de lo Social numero 2 de Getafe dicto sentencia estimatoria en fecha reciente.", "label": [], "grupo": "trampa"}
 {"text": "Se aplica el Real Decreto Legislativo 2/2015 y el Estatuto de los Trabajadores en su redaccion vigente.", "label": [], "grupo": "trampa"}
+{"text": "Ejercicio 2023. DATOS DECLARADOS POR EL CONTRIBUYENTE\n41820573H\nZUBELDIA MARTIARENA COVADONGA\nIndividual\nBienes inmuebles", "label": [{"category": "DNI", "start": 54, "end": 63}, {"category": "NOMBRE", "start": 64, "end": 93}], "grupo": "formulario"}
+{"text": "Agencia Tributaria\nDelegacion Especial de CATALUNA\nY4812907X\nARGUIÑANO BEITIALARRANGOITIA NEKANE\nAutenticidad verificable", "label": [{"category": "NIE", "start": 51, "end": 60}, {"category": "NOMBRE", "start": 61, "end": 96}], "grupo": "formulario"}
+{"text": "Vivienda situada en Cl. Melchor \nBerrondo, 14 de Errenteria y terreno urbano en Cl. Anastasio \nZugadi s/n de Errenteria.", "label": [{"category": "DIRECCION", "start": 20, "end": 45}, {"category": "DIRECCION", "start": 80, "end": 105}], "grupo": "formulario"}
+{"text": "El compareciente Anselmo Iparraguirre \nZabaleta ratifica el contenido del acta.", "label": [{"category": "NOMBRE", "start": 17, "end": 47}], "grupo": "formulario"}
+{"text": "Titular\nBittori Etxaniz Larrañaga\nImporte declarado\n14.750,80 euros", "label": [{"category": "NOMBRE", "start": 8, "end": 33}], "grupo": "formulario"}

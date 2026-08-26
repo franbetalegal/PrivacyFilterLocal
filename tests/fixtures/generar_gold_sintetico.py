@@ -304,6 +304,53 @@ CORPUS: list[tuple[str, str, list[str]]] = [
         "Trabajadores en su redaccion vigente.",
         [],
     ),
+    # ---------------- formulario: saltos de linea dentro de las entidades --
+    #
+    # Everything above is a single clean line, which is exactly what made this
+    # corpus blind to the biggest real-world failure. PDF text extraction
+    # hard-wraps lines and puts form fields on their own line, so entities are
+    # cut in half and unrelated fields end up adjacent. Measured on a real
+    # 28-page tax document: the taxpayer's name sat in a page header between an
+    # identifier line and a field label, and survived redaction in 10 of its 11
+    # occurrences, because the analyzer merged the three lines into one span and
+    # then rejected it.
+    (
+        "formulario",
+        "Ejercicio 2023. DATOS DECLARADOS POR EL CONTRIBUYENTE\n"
+        f"«{DNI_1}»\n"
+        "«ZUBELDIA MARTIARENA COVADONGA»\n"
+        "Individual\nBienes inmuebles",
+        ["DNI", "NOMBRE"],
+    ),
+    (
+        "formulario",
+        "Agencia Tributaria\nDelegacion Especial de CATALUNA\n"
+        f"«{NIE_1}»\n"
+        "«ARGUIÑANO BEITIALARRANGOITIA NEKANE»\n"
+        "Autenticidad verificable",
+        ["NIE", "NOMBRE"],
+    ),
+    (
+        "formulario",
+        # A name hard-wrapped mid-entity: the line break falls between the two
+        # halves of the surname.
+        "Vivienda situada en «Cl. Melchor \nBerrondo, 14» de Errenteria y "
+        "terreno urbano en «Cl. Anastasio \nZugadi s/n» de Errenteria.",
+        ["DIRECCION", "DIRECCION"],
+    ),
+    (
+        "formulario",
+        "El compareciente «Anselmo Iparraguirre \nZabaleta» ratifica el "
+        "contenido del acta.",
+        ["NOMBRE"],
+    ),
+    (
+        "formulario",
+        # Adjacent unrelated fields: the label must not be swept into the name,
+        # and the amount on the next line must not be redacted.
+        "Titular\n«Bittori Etxaniz Larrañaga»\nImporte declarado\n14.750,80 euros",
+        ["NOMBRE"],
+    ),
 ]
 
 

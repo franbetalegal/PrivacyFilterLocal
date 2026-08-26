@@ -192,3 +192,35 @@ def test_el_disparador_ignora_acentos_y_mayusculas():
     assert ner_es.has_person_trigger("EL COMPARECIENTE ") is True
     assert ner_es.has_person_trigger("Doña ") is True
     assert ner_es.has_person_trigger("DOÑA ") is True
+
+
+# --- segment granularity: paragraphs AND lines ---------------------------
+
+def test_los_segmentos_incluyen_parrafo_y_lineas():
+    texto = "Titular\nBittori Etxaniz Larranaga\nImporte declarado"
+    segmentos = list(ner_es._iter_segments(texto))
+    textos = [s for _, s in segmentos]
+
+    # The whole paragraph, so a hard-wrapped entity keeps its context...
+    assert texto in textos
+    # ...and each line on its own, so unrelated adjacent fields are not merged
+    # into one entity. This is what recovers a name sitting in a form header.
+    assert "Bittori Etxaniz Larranaga" in textos
+
+
+def test_los_offsets_de_las_lineas_apuntan_al_texto_original():
+    texto = "Titular\nBittori Etxaniz Larranaga\nImporte"
+    for offset, segmento in ner_es._iter_segments(texto):
+        assert texto[offset:offset + len(segmento)] == segmento
+
+
+def test_un_parrafo_de_una_sola_linea_no_se_duplica():
+    texto = "Una sola linea sin saltos"
+    segmentos = [s for _, s in ner_es._iter_segments(texto)]
+    assert segmentos == [texto]
+
+
+def test_las_lineas_muy_cortas_se_ignoran():
+    texto = "Titular\nX\nBittori Etxaniz Larranaga"
+    segmentos = [s for _, s in ner_es._iter_segments(texto)]
+    assert "X" not in segmentos

@@ -75,7 +75,9 @@ def test_soporte_bajo_se_marca_como_no_concluyente():
 def test_carga_el_corpus_sintetico_del_repositorio():
     ejemplos = baseline_cli.cargar_ejemplos(baseline_cli.CORPUS_SINTETICO)
 
-    assert len(ejemplos) == 30
+    # Deliberately not an exact count: the corpus grows as new failure patterns
+    # are found, and a hardcoded number turns every addition into a test edit.
+    assert len(ejemplos) >= 30
     assert all(isinstance(ex, Example) for ex in ejemplos)
     con_spans = [ex for ex in ejemplos if ex.spans]
     assert con_spans, "the corpus must carry annotated spans"

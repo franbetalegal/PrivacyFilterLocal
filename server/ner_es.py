@@ -792,6 +792,35 @@ def _iter_blocks(text: str):
         yield cursor, tail
 
 
+_MIN_LINE_LEN_FOR_NER = 5
+
+
+def _iter_segments(text: str):
+    """Yield ``(offset, segment)`` for every paragraph AND every single line.
+
+    Paragraphs give the models the context they need to resolve a name that is
+    hard-wrapped across two lines. Single lines are needed for the opposite
+    case: in a form or a page header, adjacent lines are unrelated fields, and
+    spaCy merges them into one entity that spans the line break. Measured on a
+    28-page tax document, the taxpayer's name sits in a page header between an
+    identifier line and a field label; at paragraph level the analyzer returned
+    nothing at all for that region, and the name survived redaction in 10 of its
+    11 occurrences. At line level it is found every time.
+
+    Both granularities are yielded and their spans unioned by the caller, which
+    already de-duplicates on (start, end, label).
+    """
+    for offset, block in _iter_blocks(text):
+        yield offset, block
+        if "\n" not in block.strip():
+            continue
+        cursor = offset
+        for line in block.split("\n"):
+            if len(line.strip()) >= _MIN_LINE_LEN_FOR_NER:
+                yield cursor, line
+            cursor += len(line) + 1
+
+
 def _select_nlps_for(block: str) -> list:
     """Choose which NER models to run on ``block`` based on its language."""
     if len(_nlps) <= 1 or not _nlps_by_lang:
@@ -857,11 +886,11 @@ def analyze(text: str, *, strict: bool = True) -> list[NERSpan]:
         return []
     seen: set[tuple[int, int, str]] = set()
     results: list[NERSpan] = []
-    for start_off, block in _iter_blocks(text):
-        # Two views of the same block: as written, and with all-caps runs
+    for start_off, block in _iter_segments(text):
+        # Two views of the same segment: as written, and with all-caps runs
         # title-cased so the case-sensitive models can see names in caps. The
         # normalised view is length-preserving, so entity offsets from it index
-        # straight back into the original block; span text is always taken from
+        # straight back into the original text; span text is always taken from
         # the original so redaction replaces what the document really contains.
         views = [block]
         normalised = normalize_allcaps_runs(block)
