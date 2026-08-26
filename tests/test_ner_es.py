@@ -13,14 +13,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from server import ner_es
 
-if not ner_es.is_available():
-    pytest.skip(
-        "Spanish spaCy model not installed. "
-        "Install with 'pip install spacy && python -m spacy download es_core_news_lg'.",
-        allow_module_level=True,
-    )
+# Only the handful of tests that actually run a spaCy pipeline need the model.
+# The rest exercise is_probably_false_positive and the segment iterator, which
+# are pure lexicon and string logic. Skipping the whole module on a missing
+# model — as this file used to — hid 143 of its 150 tests from CI, which
+# installs spaCy but not the ~500 MB language models. Those 143 cover the
+# false-positive filter, the most frequently changed logic in ner_es.
+requires_model = pytest.mark.skipif(
+    not ner_es.is_available(),
+    reason=(
+        "Spanish spaCy model not installed. Install with "
+        "'pip install spacy && python -m spacy download es_core_news_lg'."
+    ),
+)
 
 
+@requires_model
 def test_analyze_detects_person_but_not_bare_municipality():
     """Policy: a person is PII, a lone municipality is not.
 
@@ -34,16 +42,19 @@ def test_analyze_detects_person_but_not_bare_municipality():
     assert not any(s.text.strip() == "Madrid" for s in spans)
 
 
+@requires_model
 def test_analyze_offsets_map_back_to_original_text():
     text = "El interesado, Juan García, vive en Madrid."
     for span in ner_es.analyze(text):
         assert text[span.start:span.end] == span.text
 
 
+@requires_model
 def test_analyze_empty_text():
     assert ner_es.analyze("") == []
 
 
+@requires_model
 def test_analyze_score_below_opf_and_above_low_deterministic():
     text = "Juan García firmó."
     spans = ner_es.analyze(text)
@@ -71,6 +82,7 @@ def test_iter_blocks_single_block_when_no_blank_lines():
     assert list(ner_es._iter_blocks(text)) == [(0, text)]
 
 
+@requires_model
 def test_analyze_bilingual_document_offsets_stay_correct():
     # A Spanish paragraph followed by a Catalan one, separated by a blank line.
     text = (
@@ -92,6 +104,7 @@ def test_analyze_bilingual_document_offsets_stay_correct():
     assert any("Anna Puig" in p for p in persons), persons
 
 
+@requires_model
 def test_analyze_bilingual_no_body_word_flagged_as_person():
     """Regression: Catalan common words must not survive as PER on a bilingual doc."""
     text = (
@@ -139,6 +152,7 @@ def test_is_probably_false_positive_false(phrase):
     assert ner_es._is_probably_false_positive(phrase) is False
 
 
+@requires_model
 def test_analyze_drops_heading_shaped_false_positives():
     """Regression: section headings like ADMITE/NULIDAD must not become LUGAR."""
     text = (
