@@ -19,7 +19,13 @@ from server import moe_fast
 
 
 def _checkpoint_available() -> bool:
-    d = Path.home() / ".opf" / "privacy_filter"
+    # Ask inference for the directory instead of rebuilding the path: it honours
+    # OPF_CHECKPOINT, which the portable build sets. A hardcoded ~/.opf path
+    # disagrees with the loader on such a machine, so these tests would skip
+    # while the model is available, or run while it is not.
+    from server.inference import checkpoint_dir
+
+    d = checkpoint_dir()
     return (
         d.is_dir()
         and (d / "config.json").is_file()

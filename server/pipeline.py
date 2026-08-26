@@ -166,11 +166,74 @@ def _build_output(
 
 # opf labels whose spans are statistical guesses (not structurally validated)
 # and should therefore go through the same false-positive / trimming filter as
-# NER spans. Structured labels (private_email, private_url, secret, account
-# _number) already have well-defined shapes so we let them through untouched.
+# NER spans.
 _OPF_STATISTICAL_LABELS = frozenset({
     "private_person", "private_address", "private_date",
 })
+
+# The structured labels (private_phone, private_email, private_url,
+# account_number) were previously let through untouched, on the grounds that
+# they "already have well-defined shapes". The shape was assumed but never
+# checked, and opf is a statistical model on every label — measured on a real
+# 28-page tax document, that let PDF content-stream fragments and a monetary
+# amount through as phone numbers:
+#
+#     ")+(578)+(579)+(581)]"   -> TELEFONO
+#     "(594) + (596"           -> TELEFONO
+#     "+ 123.456,78"           -> TELEFONO
+#
+# The full false-positive filter is the wrong tool here (its lexicon rules are
+# built for names and prose), so each structured label gets a cheap shape
+# assertion instead: the same claim the label already makes, actually verified.
+# ``secret`` has no characteristic shape and is deliberately left alone.
+
+# Separators a phone or account number may legitimately contain.
+_PHONE_SEPARATORS = " \t+-./()"
+
+
+def _opf_shape_is_plausible(label: str, text: str) -> bool:
+    """Cheap sanity check that a structured opf span looks like its label.
+
+    Returns True for labels with no defined shape, so adding a new opf label
+    never silently starts dropping spans.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    if label == "private_phone":
+        # A comma means a decimal amount, never a phone number.
+        if "," in stripped:
+            return False
+        if any(c.isalpha() for c in stripped):
+            return False
+        if any(c not in _PHONE_SEPARATORS and not c.isdigit() for c in stripped):
+            return False
+        digits = [c for c in stripped if c.isdigit()]
+        if not 9 <= len(digits) <= 15:
+            return False
+        # A bare national number starts with 6/7/8/9; longer strings carry an
+        # international prefix and are not second-guessed here.
+        if len(digits) == 9 and digits[0] not in "6789":
+            return False
+        return True
+
+    if label == "account_number":
+        if "," in stripped:
+            return False
+        digits = [c for c in stripped if c.isdigit()]
+        letters = [c for c in stripped if c.isalpha()]
+        # IBANs carry a 2-letter country code; anything wordier is prose.
+        return len(digits) >= 8 and len(letters) <= 4
+
+    if label == "private_email":
+        local, _, domain = stripped.partition("@")
+        return bool(local) and "." in domain and not any(c.isspace() for c in stripped)
+
+    if label == "private_url":
+        return "." in stripped and not any(c.isspace() for c in stripped)
+
+    return True
 
 # Operating modes: how strictly the false-positive filter runs, per source.
 # The Viterbi preset (set separately in server.inference) already influences
@@ -216,20 +279,32 @@ def _is_numeric_reference(text: str) -> bool:
     )
 
 
-def _opf_raw_spans(opf_spans: tuple, mode: str) -> list[_RawSpan]:
+def _opf_raw_spans(opf_spans: tuple, mode: str, document: str = "") -> list[_RawSpan]:
     apply_filter, strict = _MODE_TO_OPF_FILTER[mode]
     result: list[_RawSpan] = []
     for s in opf_spans:
         text, start, end = s.text, s.start, s.end
+        # Text preceding the span, so the filter can tell "El compareciente
+        # Nicomedes Banco Salcedo" from contract boilerplate.
+        context = document[:start] if document else ""
         # Numeric-reference guard applies to *addresses* only, regardless of
         # mode: an "address" that is purely digits+dots (e.g. article 753.1
         # LEC) is a reference to a law, never a physical address.
         if s.label == "private_address" and _is_numeric_reference(text):
             continue
+        # Shape assertion for the structured labels. Applies regardless of
+        # mode, like the numeric-reference guard above: a span that cannot be
+        # what its label claims is wrong at every operating point.
+        if s.label not in _OPF_STATISTICAL_LABELS and not _opf_shape_is_plausible(
+            s.label, text
+        ):
+            continue
         if apply_filter and s.label in _OPF_STATISTICAL_LABELS:
             # Check on original first (catches public-phrase / filename /
             # single-token stoplist before trimming can distort the match).
-            if ner_es.is_probably_false_positive(text, strict=strict, label=s.label):
+            if ner_es.is_probably_false_positive(
+                text, strict=strict, label=s.label, context=context
+            ):
                 continue
             trimmed, dropped = ner_es.trim_trailing_role_words(text)
             if dropped:
@@ -237,7 +312,9 @@ def _opf_raw_spans(opf_spans: tuple, mode: str) -> list[_RawSpan]:
                 end -= dropped
                 if end <= start:
                     continue
-                if ner_es.is_probably_false_positive(text, strict=strict, label=s.label):
+                if ner_es.is_probably_false_positive(
+                    text, strict=strict, label=s.label, context=context
+                ):
                     continue
         result.append(_RawSpan(
             start=start, end=end, label=s.label,
@@ -294,7 +371,7 @@ def merge_and_redact(
             f"Unknown mode {mode!r}. Expected one of {sorted(_VALID_MODES)}."
         )
     combined = (
-        _opf_raw_spans(opf_result.detected_spans, mode)
+        _opf_raw_spans(opf_result.detected_spans, mode, text)
         + _deterministic_raw_spans(text)
         + _ner_raw_spans(text, mode)
     )

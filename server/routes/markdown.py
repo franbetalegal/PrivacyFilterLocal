@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from server import downloads, inference
+from server import messages
 
 logger = logging.getLogger("privacy_filter")
 
@@ -46,7 +47,7 @@ async def api_convert_to_markdown(
     if ext not in MARKDOWN_ONLY_EXTS:
         raise HTTPException(
             status_code=400,
-            detail=f"Formato no soportado por MarkItDown: {ext}",
+            detail=messages.message(messages.MARKDOWN_UNSUPPORTED_FORMAT, ext=ext),
         )
 
     fd, in_path = tempfile.mkstemp(suffix=ext, prefix="md_only_")
@@ -67,7 +68,7 @@ async def api_convert_to_markdown(
         if not markdown or not markdown.strip():
             raise HTTPException(
                 status_code=422,
-                detail="MarkItDown no pudo extraer texto de este archivo.",
+                detail=messages.message(messages.MARKDOWN_NO_TEXT),
             )
 
         stem = Path(file.filename or "documento").stem or "documento"

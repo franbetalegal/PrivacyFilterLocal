@@ -51,9 +51,9 @@ export default function EvaluationTab() {
   return (
     <div className="tab-content">
       <p className="muted">
-        Mide la calidad de la detección sobre el conjunto de ejemplos que vas
+        Mide la calidad de la detección sobre el conjunto de ejemplos que se van
         guardando desde la revisión (pestañas Texto y Archivos). Cuantos más
-        ejemplos, más fiable es la medida. Todo se calcula en tu equipo.
+        ejemplos, más fiable es la medida. Todo se calcula en su equipo.
       </p>
 
       <div className="eval-stats">
@@ -78,8 +78,8 @@ export default function EvaluationTab() {
 
       {empty ? (
         <p className="notice">
-          Aún no hay ejemplos guardados. Ve a Texto o Archivos, revisa una
-          detección y pulsa «Guardar como ejemplo de evaluación».
+          Aún no hay ejemplos guardados. Vaya a Texto o Archivos, revise una
+          detección y pulse «Guardar como ejemplo de evaluación».
         </p>
       ) : (
         <div className="row eval-controls">
@@ -115,8 +115,8 @@ export default function EvaluationTab() {
           <p className="muted">
             {report.examples} ejemplo(s) · {report.gold_spans} entidad(es) de
             referencia · {report.pred_spans} detectada(s) · modo {report.mode}.
-            Coincidencia por solapamiento; boundary exacto:{" "}
-            {pct(report.exact.f1)} F1.
+            Coincidencia por solapamiento; con límites exactos:{" "}
+            {pct(report.exact.f1)} de F1.
           </p>
 
           <table className="dict-table">
@@ -124,7 +124,7 @@ export default function EvaluationTab() {
               <tr>
                 <th>Etiqueta</th>
                 <th>Precisión</th>
-                <th>Recall</th>
+                <th>Cobertura</th>
                 <th>F1</th>
                 <th>Ref.</th>
                 <th>Det.</th>
@@ -148,8 +148,8 @@ export default function EvaluationTab() {
 
           {report.leak_count > 0 ? (
             <div className="warning">
-              ⚠ {report.leak_count} fuga(s): PII de referencia que sobrevivió a
-              la redacción.
+              ⚠ {report.leak_count} fuga(s): datos personales de referencia que
+              sobrevivieron a la anonimización.
               <ul className="mono">
                 {report.leaks.slice(0, 15).map((lk, i) => (
                   <li key={i}>
@@ -161,7 +161,8 @@ export default function EvaluationTab() {
             </div>
           ) : (
             <p className="notice">
-              Sin fugas: ninguna PII de referencia sobrevivió a la redacción.
+              Sin fugas: ningún dato personal de referencia sobrevivió a la
+              anonimización.
             </p>
           )}
         </div>

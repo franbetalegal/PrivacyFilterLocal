@@ -12,10 +12,11 @@ import {
 import SpanList from "../components/SpanList";
 import ModeSelector from "../components/ModeSelector";
 import Processing from "../components/Processing";
+import { renderMessages } from '../messages';
 
 const ACCEPT = ".txt,.md,.csv,.json,.log,.py,.js,.xml,.html,.pdf,.docx";
 const FIRST_RUN_HINT =
-  "The first run loads the model and can take ~30s. After that it is fast.";
+  "La primera ejecución carga el modelo y puede tardar unos 30 s. Después es rápida.";
 const DOC_EXTS = new Set([".pdf", ".docx"]);
 
 function ext(name: string | undefined | null): string {
@@ -76,7 +77,7 @@ export default function FilesTab() {
 
   async function onProcess() {
     if (!file) {
-      setError("Upload a file.");
+      setError("Suba un archivo.");
       return;
     }
     const controller = new AbortController();
@@ -98,7 +99,7 @@ export default function FilesTab() {
       setDownloadName(res.download_name);
       setMarkdownToken(res.markdown_token ?? null);
       setMarkdownName(res.markdown_name ?? null);
-      setWarning(res.warning ?? null);
+      setWarning(renderMessages(res.warnings));
       setRan(true);
       setModelReady(true);
     } catch (e) {
@@ -133,7 +134,7 @@ export default function FilesTab() {
       setDownloadName(res.download_name);
       setMarkdownToken(res.markdown_token ?? null);
       setMarkdownName(res.markdown_name ?? null);
-      setWarning(res.warning ?? null);
+      setWarning(renderMessages(res.warnings));
       if (saveExample && res.captured) {
         setCaptureMsg(
           res.captured.added
@@ -159,9 +160,10 @@ export default function FilesTab() {
   return (
     <div className="tab-content">
       <p className="muted">
-        Upload a text, PDF or DOCX file to redact PII. For PDF/DOCX you can
-        review the detected entities and un-check any you want to keep before
-        generating the final redacted copy.
+        Suba un archivo de texto, PDF o DOCX para anonimizar los datos
+        personales. En PDF y DOCX puede revisar las entidades detectadas y
+        desmarcar las que quiera conservar antes de generar la copia final
+        anonimizada.
       </p>
 
       <input
@@ -198,35 +200,36 @@ export default function FilesTab() {
 
       <div className="row">
         <button className="btn primary" onClick={onProcess} disabled={busy}>
-          {loading ? "Processing…" : "Process File"}
+          {loading ? "Procesando…" : "Procesar archivo"}
         </button>
         {busy && (
           <button className="btn" onClick={onCancel}>
-            Cancel
+            Cancelar
           </button>
         )}
       </div>
 
       {loading && (
         <Processing
-          label="Processing file…"
+          label="Procesando archivo…"
           hint={!modelReady ? FIRST_RUN_HINT : undefined}
         />
       )}
-      {applying && <Processing label="Regenerando con tu selección…" />}
+      {applying && <Processing label="Regenerando con la selección…" />}
 
       {error && <p className="error">Error: {error}</p>}
 
       {!loading && ran && !error && (
         <div className="result">
           <p>
-            Processed in <strong>{elapsed != null ? `${elapsed.toFixed(1)}s` : "—"}</strong>{" "}
-            — <strong>{spans.length}</strong> entities detected
+            Procesado en <strong>{elapsed != null ? `${elapsed.toFixed(1)}s` : "—"}</strong>{" "}
+            — <strong>{spans.length}</strong> entidad(es) detectada(s)
           </p>
           {timings && (
             <p className="muted timings">
               OCR/extracción {timings.extract.toFixed(1)}s · detección{" "}
-              {timings.detect.toFixed(1)}s · redacción {timings.redact.toFixed(1)}s
+              {timings.detect.toFixed(1)}s · anonimización{" "}
+              {timings.redact.toFixed(1)}s
               {timings.verify > 0 && ` · verificación ${timings.verify.toFixed(1)}s`}
             </p>
           )}
@@ -247,11 +250,11 @@ export default function FilesTab() {
                     disabled={busy}
                     title="Regenera el archivo aplicando solo las entidades marcadas."
                   >
-                    ↻ Regenerar con mi selección ({keptSpans.length}/{spans.length})
+                    ↻ Regenerar con la selección ({keptSpans.length}/{spans.length})
                   </button>
                   <label
                     className="save-example"
-                    title="Guarda el texto y tus entidades corregidas como ejemplo para medir la precisión (se queda en tu equipo)."
+                    title="Guarda el texto y sus entidades corregidas como ejemplo para medir la precisión (se queda en su equipo)."
                   >
                     <input
                       type="checkbox"
@@ -266,7 +269,7 @@ export default function FilesTab() {
               )}
             </>
           ) : (
-            <p className="muted">No PII entities detected.</p>
+            <p className="muted">No se han detectado datos personales.</p>
           )}
           {downloadToken && (
             <p className="row">
@@ -275,7 +278,7 @@ export default function FilesTab() {
                 href={downloadUrl(downloadToken)}
                 download={downloadName ?? undefined}
               >
-                ⬇ Download {downloadName ?? "redacted file"}
+                ⬇ Descargar {downloadName ?? "archivo anonimizado"}
               </a>
               {markdownToken && (
                 <a
