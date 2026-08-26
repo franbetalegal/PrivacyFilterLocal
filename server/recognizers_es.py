@@ -146,6 +146,61 @@ def _re(pat: str) -> re.Pattern:
     return re.compile(pat)
 
 
+# --- Street-address building blocks ---------------------------------------
+#
+# A Spanish postal address is recognisable by shape, and leaving it to the
+# statistical layers was losing it outright: measured on a real tax document,
+# "Cl. Sant Ferran, 0176 de Sabadell" survived redaction in full, and the next
+# address had only its street name removed — labelled NOMBRE, because "Frederic
+# Soler" is a person's name used as a street name.
+#
+# TWO independent signals are always required, a street-type marker AND a house
+# number or "s/n". A marker alone fires on "Cl@ve PIN" (the tax agency's login
+# system) and on any sentence opening with "Plaza". Requiring the number is what
+# makes this safe as a deterministic match, since deterministic spans bypass the
+# false-positive filter — the privilege ES_PHONE holds on a bare regex, which is
+# how PDF content-stream fragments ended up redacted as phone numbers.
+
+# Case-insensitive: addresses are written "Cl." and "calle" alike. The street
+# NAME must still be capitalised, which is what keeps "la calle es competencia
+# municipal" and "Plaza vacante en el tribunal" from matching.
+_STREET_MARKER = (
+    r"\b(?i:C/|Cl|Cla|Calle|Carrer|Av|Avda|Avenida|Avinguda|Pza|Plza|Plaza|"
+    r"Pla[çc]a|Ps|Ps[eo]|Paseo|Passeig|Ctra|Carretera|Rda|Ronda|Rbla|Rambla|"
+    r"Trav|Travesia|Traves[ií]a|Cam[ií]|Camino|Gta|Glorieta|Urb|"
+    r"Urbanizaci[oó]n|Pol[ií]gono|Pol)\.?"
+)
+
+# Connectors real street names use. They may appear several in a row ("de los
+# Olmos") and may lead the name outright ("del Molino Viejo").
+_CONNECTOR = r"(?:de|del|dels|de\s+la|de\s+los|de\s+las|la|las|los|les|el|i|y|d')"
+_NAME_WORD = r"[A-ZÁÉÍÓÚÜÑÇ][\w'’·-]*"
+_STREET_NAME = (
+    r"(?:" + _CONNECTOR + r"\s+)*" + _NAME_WORD
+    + r"(?:\s+(?:" + _CONNECTOR + r"\s+)*" + _NAME_WORD + r"){0,4}"
+)
+
+_HOUSE_NUMBER = r"(?:n[.ºo°]?\s*)?(?:\d{1,5}[ºª°]?|s/n)\b"
+
+# Floor and door. A bare number is NOT accepted as a floor: with three
+# repetitions allowed, "\\d{1,3}" swallowed a postcode in pieces ("082" + "02"),
+# truncating "CL BOSCH, 1 08202 SABADELL" to "CL BOSCH, 1 08202". A floor must
+# carry an ordinal marker — º, ª, ° or the bare "o"/"a" that PDF extraction
+# leaves behind — or be a spelled-out level.
+_FLOOR = r"(?:\d{1,3}\s*(?:[ºª°]|[oa]\b)|bajo|entlo|entresuelo|[Pp]iso|[Pp]ta|[Pp]uerta|[Ee]sc)"
+# A lone capital letter is a door only when nothing alphabetic follows it;
+# without that guard it ate the first letter of the municipality.
+_DOOR = r"[A-Z](?![A-Za-zÁÉÍÓÚÜÑÇ])"
+_FLOOR_DOOR = r"(?:\s*,?\s*(?:" + _FLOOR + r"|" + _DOOR + r")\.?){0,3}"
+
+# After a postcode, a capitalised run is the municipality.
+_POSTCODE_AND_CITY = (
+    r"(?:\s*,?\s*\d{5}(?:\s+" + _NAME_WORD + r"(?:\s+" + _NAME_WORD + r"){0,2})?)?"
+)
+# "…, 0176 de Sabadell" — no postcode, the municipality hangs off "de".
+_CITY_AFTER_DE = r"(?:\s+de\s+" + _NAME_WORD + r"(?:\s+" + _NAME_WORD + r"){0,2})?"
+
+
 _RECOGNIZERS: tuple[_Recognizer, ...] = (
     _Recognizer(
         entity_type="ES_DNI",
@@ -245,6 +300,47 @@ _RECOGNIZERS: tuple[_Recognizer, ...] = (
         validator=None,
         context=("registro", "registral", "propiedad", "mercantil",
                  "inscripción", "inscripcion", "finca"),
+    ),
+    _Recognizer(
+        entity_type="ES_STREET_ADDRESS",
+        # Spanish postal addresses have a recognisable shape, and leaving them
+        # to the statistical layers was losing them outright: measured on a real
+        # tax document, "Cl. Sant Ferran, 0176 de Sabadell" survived redaction
+        # in full, while the next address had only its street name removed — and
+        # labelled NOMBRE, because "Frederic Soler" is a person's name used as a
+        # street name.
+        #
+        # TWO independent signals are required, a street-type marker AND a house
+        # number or "s/n". A marker alone fires on "Cl@ve PIN", the tax agency's
+        # login system, and on any sentence starting with "Plaza". Requiring the
+        # number is what makes this safe enough to be a deterministic match,
+        # since deterministic spans bypass the false-positive filter — the very
+        # privilege ES_PHONE holds on a bare regex, which is how PDF
+        # content-stream fragments ended up redacted as phone numbers.
+        pattern=_re(
+            # Built from named pieces rather than one long expression: every
+            # part below was added because a real address failed without it.
+            _STREET_MARKER          # "Cl.", "calle", "avenida" — any case
+            # Punctuation may sit between marker and name: PDF extraction
+            # produced "Cl., Frederic Soler" in one of three occurrences of the
+            # same address, and requiring plain whitespace lost exactly that one.
+            + r"[\s,]+"
+            + _STREET_NAME          # "Sant Ferran", "del Molino Viejo",
+                                    # "Herreria de los Olmos"
+            + r"[,\s]+" + _HOUSE_NUMBER   # second signal: "14", "s/n", "nº 3"
+            + _FLOOR_DOOR           # optional "3º B", "bajo", "esc. 2"
+            + _POSTCODE_AND_CITY    # optional "28912 Leganes"
+            + _CITY_AFTER_DE        # optional "de Sabadell"
+        ),
+        # Below the check-digit entities (0.85-0.9): a shape match is strong
+        # evidence but not proof. Above ES_POSTAL_CODE (0.45) and ES_PHONE
+        # (0.55), so a full address wins the overlap against the bare postal
+        # code inside it and against a NOMBRE span over the street name.
+        score=0.7,
+        validator=None,
+        context=("domicilio", "direccion", "dirección", "sito", "sita",
+                 "situado", "situada", "vivienda", "inmueble", "finca",
+                 "notificaciones", "residencia"),
     ),
 )
 

@@ -53,6 +53,7 @@ _FRIENDLY_LABEL: dict[str, str] = {
     "ES_CADASTRAL_REF": "CATASTRO",
     "ES_CREDIT_CARD": "TARJETA",
     "ES_REGISTRY_REF": "REGISTRO",
+    "ES_STREET_ADDRESS": "DIRECCION",
     # Spanish NER (spaCy) — grouped with opf's equivalents for consistent
     # pseudonymization: a person detected by NER and by opf gets the same token.
     "ES_NER_PER": "NOMBRE",
