@@ -291,3 +291,70 @@ def test_a_single_token_date_still_passes(date):
     # Regression: the single-token rule must not swallow dates. A token with
     # digits is a different class of evidence from a lone capitalised word.
     assert ner_es.is_probably_false_positive(date) is False
+
+
+# --- dates: birth versus transactional -----------------------------------
+#
+# Two classes that want opposite treatment. A date of birth identifies a person.
+# The procedural and transactional dates that fill an official document are the
+# substance of the matter: a capital gain is computed from the acquisition and
+# transmission dates, so removing them makes the anonymised copy useless for the
+# analysis it was made for. Default is to redact only births;
+# PF_REDACT_ALL_DATES=1 restores blanket redaction.
+
+@pytest.mark.parametrize(
+    "date,context",
+    [
+        ("14 de marzo de 1979", "La interesada, nacida el "),
+        ("08/10/1974", "con fecha de nacimiento "),
+        ("12 de enero de 1985", "nacido el "),
+        ("03/07/1990", "DOÑA MARIA, NACIDA EL "),
+    ],
+)
+def test_a_date_of_birth_is_redacted(date, context):
+    assert (
+        ner_es.is_probably_false_positive(
+            date, strict=False, label="private_date", context=context
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    "date,context",
+    [
+        ("21/05/2019", "Escritura de compraventa de "),
+        ("16/10/2023", "notificado en fecha "),
+        ("31/12/2023", "Ejercicio cerrado a "),
+        ("14 de marzo de 1979", "firmado el "),
+        ("01/01/2024", "plazo que vence el "),
+    ],
+)
+def test_a_transactional_date_is_left_alone(date, context):
+    assert (
+        ner_es.is_probably_false_positive(
+            date, strict=False, label="private_date", context=context
+        )
+        is True
+    )
+
+
+def test_the_date_rule_needs_the_label():
+    # Only the label says we are looking at a date; callers that pass none keep
+    # the previous behaviour, which several existing tests rely on.
+    assert ner_es.is_probably_false_positive("31/10/2025") is False
+
+
+def test_a_spelled_out_birth_date_reaches_the_date_rule():
+    # Regression: _is_numeral_phrase rejects "14 de marzo de 1979" outright,
+    # every token being a month or a digit. With the date rule below that check,
+    # a birth date never reached it.
+    assert (
+        ner_es.is_probably_false_positive(
+            "14 de marzo de 1979",
+            strict=False,
+            label="private_date",
+            context="nacida el ",
+        )
+        is False
+    )

@@ -436,6 +436,21 @@ PERSON_TRIGGER_PHRASES_LEADING = frozenset({
     "a favor de", "identificado como", "identificada como",
 })
 
+# Phrases that mark a date as a DATE OF BIRTH, which identifies a person, as
+# opposed to the procedural and transactional dates that fill an official
+# document (ejercicio, devengo, plazo, notificación, escritura, adquisición).
+# The distinction matters because the two want opposite treatment: a birth date
+# must be removed, while an acquisition date IS the substance of a tax dispute —
+# a capital gain is computed from it — so removing it makes the anonymised copy
+# useless for the analysis it was anonymised for.
+BIRTH_DATE_TRIGGERS = frozenset({
+    "nacido el", "nacida el", "nacido en", "nacida en",
+    "fecha de nacimiento", "f. nacimiento", "f nacimiento",
+    "data de naixement", "nascut el", "nascuda el",
+    "nacimiento", "naixement",
+})
+
+
 # Legal-entity markers. Policy decision: company names stay in the clear so the
 # document keeps making sense, so a context trigger must NOT rescue a span that
 # carries one of these. A sole trader is the exception the guard has to respect

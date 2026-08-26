@@ -56,6 +56,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from server.lexicon_es import (
+    BIRTH_DATE_TRIGGERS,
     ENTITY_MARKERS,
     GENERIC_SINGLE,
     MONTHS,
@@ -475,6 +476,27 @@ def strip_leading_person_trigger(text: str) -> tuple[str, int]:
     return remaining, max(dropped, 0)
 
 
+# Redact every date rather than only dates of birth. Off by default: the tool's
+# main use is handing an anonymised copy to a model to reason about the case, and
+# a liquidation's acquisition and transmission dates are what the computation
+# rests on — remove them and the copy is useless for the purpose it was made
+# for. Set PF_REDACT_ALL_DATES=1 when the copy is going somewhere the
+# re-identification risk of a bare date outweighs its usefulness.
+_REDACT_ALL_DATES = os.environ.get("PF_REDACT_ALL_DATES", "0").strip().lower() in (
+    "1", "true", "yes",
+)
+
+_DATE_LABELS = frozenset({"private_date", "ES_NER_DATE", "FECHA"})
+
+
+def _is_birth_date_context(context: str) -> bool:
+    """True when the text before a date announces a date of birth."""
+    if not context:
+        return False
+    window = _fold_accents(context[-_CONTEXT_CHARS:])
+    return any(phrase in window for phrase in BIRTH_DATE_TRIGGERS)
+
+
 def _resolve_label(spacy_label: str, text: str, context: str) -> str | None:
     """Decide which label a spaCy entity is kept under, or ``None`` to drop it.
 
@@ -619,6 +641,19 @@ def is_probably_false_positive(
 
     if any(ch in stripped for ch in _STRUCTURAL_CHARS):
         return True
+
+    # Dates split into two classes that want opposite treatment. A date of birth
+    # identifies a person; the procedural and transactional dates that fill an
+    # official document (ejercicio, devengo, plazo, escritura, adquisición) are
+    # the substance of the case. Only the label tells us we are looking at a
+    # date at all, so callers that pass none keep the previous behaviour.
+    #
+    # Decided here, above the content rules, because those are built for prose
+    # and misjudge a date: _is_numeral_phrase rejects "14 de marzo de 1979"
+    # outright — every token is a month or a digit — so a birth date never
+    # reached this branch when it sat lower down.
+    if label in _DATE_LABELS and not _REDACT_ALL_DATES:
+        return not _is_birth_date_context(context)
 
     normalized = _normalized_phrase(text)
     if normalized in PUBLIC_PHRASES or normalized in REGIONS:
