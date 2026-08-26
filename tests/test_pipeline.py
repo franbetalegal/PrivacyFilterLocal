@@ -350,12 +350,33 @@ def test_numeric_reference_never_tagged_as_direccion(ref, mode):
 
 
 def test_real_date_with_slashes_still_kept():
-    """Dates like 31/10/2025 must survive the numeric-reference guard."""
-    text = "Firmado el 31/10/2025 en Barcelona."
+    """A date of birth must survive the numeric-reference guard.
+
+    The guard rejects digit-and-dot runs as law references, and a DD/MM/YYYY
+    date has two slashes. The context here is a birth date because that is the
+    date class the pipeline redacts; see the companion test below for the class
+    it deliberately leaves alone.
+    """
+    text = "Nacida el 31/10/2025 en Barcelona."
     start = text.index("31/10/2025")
     opf = _stub_opf_result(text, [(start, start + 10, "private_date", "31/10/2025")])
     result = merge_and_redact(text, opf, mode="balanced")
     assert any(s.label == "FECHA" for s in result.detected_spans)
+
+
+def test_a_transactional_date_is_left_in_the_clear():
+    """Policy: only dates of birth are redacted by default.
+
+    An acquisition or signature date is the substance of a tax or legal matter —
+    a capital gain is computed from it — so removing it makes the anonymised copy
+    useless for the analysis it was made for. PF_REDACT_ALL_DATES=1 restores the
+    previous behaviour when the copy is going somewhere riskier.
+    """
+    text = "Escritura de compraventa de 21/05/2019 ante notario."
+    start = text.index("21/05/2019")
+    opf = _stub_opf_result(text, [(start, start + 10, "private_date", "21/05/2019")])
+    result = merge_and_redact(text, opf, mode="balanced")
+    assert not any(s.label == "FECHA" for s in result.detected_spans)
 
 
 def test_real_address_with_letters_still_kept():
