@@ -140,6 +140,12 @@ class _Recognizer:
     score: float
     validator: Callable[[str], bool] | None
     context: tuple[str, ...] = ()
+    # When True, ``context`` stops being a score bonus and becomes a
+    # precondition: no context word nearby, no match. Needed for patterns whose
+    # shape alone is too generic to stand on its own — a 20-26 character
+    # alphanumeric run is a verification code, a cadastral reference or a hash,
+    # and only the surrounding words tell them apart.
+    require_context: bool = False
 
 
 def _re(pat: str) -> re.Pattern:
@@ -302,6 +308,33 @@ _RECOGNIZERS: tuple[_Recognizer, ...] = (
                  "inscripción", "inscripcion", "finca"),
     ),
     _Recognizer(
+        entity_type="ES_VERIFICATION_CODE",
+        # Código Seguro de Verificación: the code that lets anyone fetch the
+        # original document from the issuing body's website. It is not another
+        # identifier, it is a CREDENTIAL — an "anonymised" copy carrying its own
+        # CSV can be traded back for the original, so the anonymisation is
+        # reversible by whoever receives it. Under art. 4(5) GDPR the additional
+        # information needed to re-identify has to be kept separately; here it
+        # travels inside the document.
+        #
+        # Shape alone cannot carry this: a 20-26 character alphanumeric run is
+        # also a cadastral reference or a hash. Hence require_context — the only
+        # recognizer that uses it — so a match needs one of the words below
+        # nearby. Without that the pattern fired on every cadastral reference in
+        # the document.
+        pattern=_re(r"\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*\d)[A-Z0-9]{16,32}\b"),
+        score=0.8,
+        validator=None,
+        require_context=True,
+        context=(
+            "código seguro de verificación", "codigo seguro de verificacion",
+            "csv", "c.s.v", "autenticidad", "verificable", "cotejo",
+            "sede electrónica", "sede electronica", "verificación de",
+            "verificacion de", "huella digital", "código de verificación",
+            "codigo de verificacion",
+        ),
+    ),
+    _Recognizer(
         entity_type="ES_STREET_ADDRESS",
         # Spanish postal addresses have a recognisable shape, and leaving them
         # to the statistical layers was losing them outright: measured on a real
@@ -349,13 +382,18 @@ _CONTEXT_WINDOW = 60
 _CONTEXT_BOOST = 0.15
 
 
-def _context_boost(text: str, start: int, end: int, ctx: tuple[str, ...]) -> float:
+def _has_context(text: str, start: int, end: int, ctx: tuple[str, ...]) -> bool:
+    """True when any context word appears within the window around the match."""
     if not ctx:
-        return 0.0
+        return False
     lo = max(0, start - _CONTEXT_WINDOW)
     hi = min(len(text), end + _CONTEXT_WINDOW)
     window = text[lo:hi].lower()
-    return _CONTEXT_BOOST if any(word in window for word in ctx) else 0.0
+    return any(word in window for word in ctx)
+
+
+def _context_boost(text: str, start: int, end: int, ctx: tuple[str, ...]) -> float:
+    return _CONTEXT_BOOST if _has_context(text, start, end, ctx) else 0.0
 
 
 def analyze(text: str) -> list[Recognition]:
@@ -368,6 +406,10 @@ def analyze(text: str) -> list[Recognition]:
             matched = m.group()
             if rec.validator is not None and not rec.validator(matched):
                 continue
+            if rec.require_context and not _has_context(
+                text, m.start(), m.end(), rec.context
+            ):
+                continue
             score = min(1.0, rec.score + _context_boost(text, m.start(), m.end(), rec.context))
             hits.append(Recognition(
                 start=m.start(),
@@ -376,4 +418,50 @@ def analyze(text: str) -> list[Recognition]:
                 score=score,
                 text=matched,
             ))
-    return hits
+    return hits + _propagate_context_confirmed(text, hits)
+
+
+_CONTEXT_REQUIRED_TYPES = frozenset(
+    r.entity_type for r in _RECOGNIZERS if r.require_context
+)
+
+
+def _propagate_context_confirmed(
+    text: str, hits: list[Recognition],
+) -> list[Recognition]:
+    """Extend a context-confirmed value to its other occurrences in the text.
+
+    ``require_context`` asks for explanatory words near the match, which the
+    first mention of a verification code has and later ones do not: measured on
+    a real tax document, the code appeared twice — once under "Código Seguro de
+    Verificación" and once on the signature page beside "Fdo.:______" — and only
+    the first was caught, so the credential still shipped.
+
+    Widening the context window would trade the precision the requirement buys.
+    Identity is the sounder argument: the same string in the same document is the
+    same code, so one confirmed occurrence licenses the rest.
+    """
+    if not _CONTEXT_REQUIRED_TYPES:
+        return []
+    confirmed = {
+        (h.entity_type, h.text, h.score)
+        for h in hits
+        if h.entity_type in _CONTEXT_REQUIRED_TYPES
+    }
+    if not confirmed:
+        return []
+    taken = {(h.start, h.end) for h in hits}
+    extra: list[Recognition] = []
+    for entity_type, value, score in confirmed:
+        for m in re.finditer(re.escape(value), text):
+            if (m.start(), m.end()) in taken:
+                continue
+            taken.add((m.start(), m.end()))
+            extra.append(Recognition(
+                start=m.start(),
+                end=m.end(),
+                entity_type=entity_type,
+                score=score,
+                text=value,
+            ))
+    return extra
