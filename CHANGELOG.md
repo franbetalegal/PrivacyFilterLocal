@@ -5,6 +5,54 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-08-27
+
+### Fixed
+- **Names on scanned documents were missed on some pages.** OCRed pages were
+  handed to the analyzer as one very long line: `_ocr_page` joined every word
+  on the page with single spaces and appended a single newline at the end, while
+  the text-layer path has always emitted a newline per line and a second one per
+  block. That silenced the per-line NER pass (`ner_es._iter_segments`), which
+  only yields lines when the block contains a newline — and it is the pass that
+  catches a name sitting alone on a header line, exactly the shape that was
+  surviving redaction on real scanned court documents. Tesseract already
+  reports the block, paragraph and line of every word, so the separators are
+  now read from it rather than guessed. Separators carry no rectangle, so the
+  character-to-coordinate map stays 1:1 and redaction still lands on the right
+  glyphs.
+
+- **The in-app updater could not update a macOS or Linux install.** It scanned
+  the release for an asset ending in `.zip`; releases have only ever carried
+  `.tar.gz` (macOS, Linux) and `.exe` (Windows). So the archive path was
+  unreachable and every install fell through to `git pull`, which cannot work
+  in a folder extracted from a tarball — the very thing the archives are for.
+  The asset is now chosen by platform, `.tar.gz` is unpacked (with tar's `data`
+  filter, which refuses path traversal and links escaping the destination), and
+  the bundled `opf` package plus the pinned requirements are reinstalled
+  afterwards so an update cannot ship new sources while the venv keeps running
+  the old wheel. When there is genuinely nothing installable for the platform,
+  the app now says where to download it instead of surfacing a git error about
+  a directory that is not a repository.
+
+- **The update check never reached GitHub on macOS.** A python.org framework
+  Python ships no CA bundle until the user runs `Install Certificates.command`,
+  so every `urlopen` failed with CERTIFICATE_VERIFY_FAILED — and because the
+  check reports network errors only in its `error` field, which nothing
+  surfaces, the app simply never showed an update. Measured on a real 2.6.0
+  install: the check had never once succeeded. Both update checks now verify
+  against `certifi`'s bundle, the same one `requests` uses, which is why the
+  model download worked while the update check did not. `certifi` is pinned in
+  `requirements-server.txt` now that it is a direct dependency.
+
+- **Leaving a tab threw away the work in it.** Tabs were unmounted on every
+  switch, so leaving the Files tab mid-analysis discarded the file, the detected
+  spans and the review selection while the upload carried on server-side with
+  nowhere to land. The "save as evaluation example" checkbox could never take
+  effect either, because the example is saved in a second step that needed the
+  file the unmount had already discarded. Tabs are now mounted on first open
+  and hidden rather than unmounted; mounting stays lazy, so opening the app does
+  not fire every tab's start-up requests at once.
+
 ## [2.5.0] - 2026-08-05
 
 ### Added
