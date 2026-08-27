@@ -337,19 +337,10 @@ PrivacyFilterLocal/
 ## Updating
 
 - **Model**: the **Update model** button (Info tab) downloads the latest model.
-- **App**: distribute a freshly built `portable-build/`. (The in-app self-update
-  via git does not apply to the portable package.)
-
-### Creating a release
-Bump `VERSION` + `CHANGELOG.md`, commit, then tag and push — CI builds the
-artifacts and publishes the release:
-```powershell
-git tag v2.4.0 ; git push origin v2.4.0
-```
-`create_release.py` remains for creating a release entry manually via the API:
-```powershell
-$env:GITHUB_TOKEN = "your-token"; python create_release.py; Remove-Item Env:GITHUB_TOKEN
-```
+- **App**: the **Update app** banner installs the latest release in place. On
+  macOS and Linux it downloads that platform's archive and unpacks it over the
+  install, keeping the model, caches and virtualenv; in a git checkout it pulls
+  instead. Windows installs are replaced by re-running the installer.
 
 ## License
 
