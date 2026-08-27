@@ -105,11 +105,14 @@ def test_the_label_and_the_normalisation():
     assert "ES_VERIFICATION_CODE" in _ID_LABELS
 
 
-def test_it_is_the_only_recognizer_requiring_context():
+def test_only_the_shapeless_recognizers_require_context():
     # require_context trades recall for precision and should stay exceptional:
     # every other recognizer either validates a check digit or carries a shape
-    # specific enough to stand alone.
-    requiring = [
+    # specific enough to stand alone. The two that need it are the two whose
+    # shape says nothing on its own — a long alphanumeric run is a verification
+    # code or a cadastral reference, and "282/2010" is a case number or a
+    # statute or a date.
+    requiring = {
         r.entity_type for r in recognizers_es._RECOGNIZERS if r.require_context
-    ]
-    assert requiring == ["ES_VERIFICATION_CODE"]
+    }
+    assert requiring == {"ES_VERIFICATION_CODE", "ES_CASE_NUMBER"}

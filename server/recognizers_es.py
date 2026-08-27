@@ -146,6 +146,12 @@ class _Recognizer:
     # alphanumeric run is a verification code, a cadastral reference or a hash,
     # and only the surrounding words tell them apart.
     require_context: bool = False
+    # Words that veto a match when they appear near it, checked in the same
+    # window as ``context``. Needed where the shape a trigger word licenses is
+    # also the shape of something that is not PII: a case number
+    # ("Expediente 282/2010") and a statute citation ("Ley Orgánica 5/2000")
+    # are written identically, and both live near the word "procedimiento".
+    exclude_context: tuple[str, ...] = ()
 
 
 def _re(pat: str) -> re.Pattern:
@@ -308,6 +314,42 @@ _RECOGNIZERS: tuple[_Recognizer, ...] = (
                  "inscripción", "inscripcion", "finca"),
     ),
     _Recognizer(
+        entity_type="ES_CASE_NUMBER",
+        # Court and prosecution case numbers: "Expediente 282/2010",
+        # "N° Expediente Fiscalía: 1548/2010", "Diligencias Previas 1234/2019".
+        # They identify the proceeding, and through it the person it is about,
+        # which is why the tool was already redacting them — but only when the
+        # transformer happened to read enough of the surrounding line. Measured
+        # on a real scanned court order, the same number was found when the page
+        # arrived as one long line and lost when it arrived as separate lines,
+        # purely because the model saw less context. A number that identifies a
+        # case should not depend on how the OCR laid out the page.
+        #
+        # Shape alone is far too generic (it is also every date and every
+        # statute number), hence require_context, and exclude_context for the
+        # statutes: "Ley Orgánica 5/2000" is cited constantly in exactly these
+        # documents and is public law, not anybody's personal data.
+        #
+        # Only the number matches, never the announcing word, so the redacted
+        # document still reads "N° Expediente Fiscalía: [EXPEDIENTE_1]".
+        pattern=_re(r"\b\d{1,7}\s*/\s*(?:19|20)\d{2}\b"),
+        score=0.8,
+        validator=None,
+        require_context=True,
+        context=(
+            "expediente", "expedient", "diligencias", "diligències",
+            "procedimiento", "procediment", "autos", "sumario", "sumari",
+            "ejecutoria", "atestado", "rollo", "causa", "n.i.g", "nig",
+            "juzgado", "fiscalía", "fiscalia", "juicio", "judici",
+        ),
+        exclude_context=(
+            "ley", "llei", "orgánica", "organica", "orgànica",
+            "real decreto", "decreto", "decret", "reglamento", "reglament",
+            "directiva", "artículo", "articulo", "article", "art.", "arts.",
+            "l.o.", "r.d.", "constitución", "constitucion",
+        ),
+    ),
+    _Recognizer(
         entity_type="ES_VERIFICATION_CODE",
         # Código Seguro de Verificación: the code that lets anyone fetch the
         # original document from the issuing body's website. It is not another
@@ -408,6 +450,10 @@ def analyze(text: str) -> list[Recognition]:
                 continue
             if rec.require_context and not _has_context(
                 text, m.start(), m.end(), rec.context
+            ):
+                continue
+            if rec.exclude_context and _has_context(
+                text, m.start(), m.end(), rec.exclude_context
             ):
                 continue
             score = min(1.0, rec.score + _context_boost(text, m.start(), m.end(), rec.context))

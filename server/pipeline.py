@@ -55,6 +55,7 @@ _FRIENDLY_LABEL: dict[str, str] = {
     "ES_REGISTRY_REF": "REGISTRO",
     "ES_STREET_ADDRESS": "DIRECCION",
     "ES_VERIFICATION_CODE": "CSV",
+    "ES_CASE_NUMBER": "EXPEDIENTE",
     # Spanish NER (spaCy) — grouped with opf's equivalents for consistent
     # pseudonymization: a person detected by NER and by opf gets the same token.
     "ES_NER_PER": "NOMBRE",
@@ -69,6 +70,7 @@ _ID_LABELS = frozenset({
     "ES_DNI", "ES_NIE", "ES_NIF_CIF", "ES_IBAN", "ES_SSN",
     "ES_CREDIT_CARD", "ES_CADASTRAL_REF", "ES_POSTAL_CODE",
     "ES_LICENSE_PLATE", "account_number", "ES_VERIFICATION_CODE",
+    "ES_CASE_NUMBER",
 })
 
 
