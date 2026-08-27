@@ -5,6 +5,52 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] - 2026-08-27
+
+### Fixed
+- **A name alone on a header line is now found on scanned documents.** Measured
+  on a real 4-page scanned court order: the person named on the
+  "MENOR: <name>" line was never redacted there, though the same person was
+  redacted elsewhere in the document. Joined into one long line, that name sits
+  in a header soup ("... Expediente 282/2010 Sección G MENOR: <name> AUTO En
+  Barcelona, a ...") and spaCy proposes nothing at all for the region; given the
+  page's own line breaks, the line is analysed on its own and the name comes
+  out. The addressee's name came out whole too ("RUBEN FERRER MARTIN") instead
+  of as two wrong fragments, and so did the address.
+
+  Line breaks only. Block and paragraph boundaries deliberately do NOT become
+  blank lines, which is what 2.6.1 did and what made it worse: Tesseract splits
+  a noisy scan into blocks freely — a watermark or a column becomes its own
+  block — and a blank line there cuts the context both models depend on.
+  `PF_OCR_LINE_BREAKS=0` restores the previous whole-page-as-one-line behaviour.
+
+- **Case numbers no longer depend on how the OCR laid out the page.** They were
+  being detected by the transformer reading the surrounding line, so the same
+  number was found when the page arrived as one long line and lost when it
+  arrived as separate lines. A number that identifies a proceeding — and through
+  it the person it concerns — should not be at the mercy of layout, so
+  `ES_CASE_NUMBER` now matches it deterministically: "N° Expediente Fiscalía:
+  1548/2010", "Procedimiento Expediente 282/2010", "Diligencias Previas
+  1234/2019".
+
+  Only the number is matched, never the announcing word, so the redacted
+  document still reads "N° Expediente Fiscalía: [EXPEDIENTE_1]". A trigger word
+  is required nearby, and recognizers gained an `exclude_context` so statute
+  citations are never touched: "Ley Orgánica 5/2000" and "Real Decreto
+  1774/2004" are cited constantly in exactly these documents and are public law,
+  not anybody's personal data.
+
+- **A scanned document could lose most of its pages to a dead worker pool.**
+  Parallel page extraction is an optimisation, but a worker dying takes the
+  whole pool down with it (`BrokenProcessPool`) and every pending page with it,
+  and the exception propagated straight out of `extract_with_map`, past its own
+  `Optional` contract. Reproduced on the same 4-page scan — just over the
+  3-OCR-page threshold that turns the pool on — where each spawned worker
+  re-imports the server package, torch included, and the machine could not carry
+  four of those at once, while the very same pages extract fine one at a time.
+  A failed pool is now logged, discarded so the next document retries in
+  parallel, and the document is extracted sequentially instead.
+
 ## [2.6.1] - 2026-08-27
 
 ### Fixed
