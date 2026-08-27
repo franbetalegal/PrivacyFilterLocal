@@ -413,3 +413,129 @@ def test_cache_misses_for_different_content(tmp_path: Path):
     rb = pdf_ops.extract_with_map(str(b))
     pdf_ops.clear_extract_cache()
     assert "Uno" in ra[0] and "Dos" in rb[0]
+
+
+# --- OCR line structure ----------------------------------------------------
+
+
+class _FakeTesseract:
+    """Stand-in for ``pytesseract`` returning a fixed ``image_to_data`` dict.
+
+    Lets the OCR assembly be tested without the tesseract binary, which CI
+    runners do not have.
+    """
+
+    class Output:
+        DICT = "dict"
+
+    class TesseractNotFoundError(Exception):
+        pass
+
+    def __init__(self, data: dict):
+        self._data = data
+
+    def image_to_data(self, image, lang=None, output_type=None):
+        return self._data
+
+
+def _fake_ocr_data(words: list[tuple[str, int, int, int]]) -> dict:
+    """Build an ``image_to_data`` dict from ``(text, block, par, line)`` tuples."""
+    data = {
+        "text": [], "block_num": [], "par_num": [], "line_num": [],
+        "left": [], "top": [], "width": [], "height": [],
+    }
+    for index, (word, block, par, line) in enumerate(words):
+        data["text"].append(word)
+        data["block_num"].append(block)
+        data["par_num"].append(par)
+        data["line_num"].append(line)
+        data["left"].append(10 + index * 50)
+        data["top"].append(20 + line * 30)
+        data["width"].append(len(word) * 8)
+        data["height"].append(14)
+    return data
+
+
+def _ocr_a_blank_page(monkeypatch, tmp_path: Path, data: dict):
+    """Run ``_ocr_page`` over a blank page with ``pytesseract`` stubbed out."""
+    monkeypatch.setitem(sys.modules, "pytesseract", _FakeTesseract(data))
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    try:
+        return pdf_ops._ocr_page(page, 0, fitz)
+    finally:
+        doc.close()
+
+
+def test_ocr_page_separates_lines_and_paragraphs(monkeypatch, tmp_path: Path):
+    """OCR output must carry the page's line and block structure.
+
+    The text-layer path in :func:`server.pdf_ops._extract_page` emits a newline
+    per line and a second one per block. The OCR path has to match, because the
+    analyzer runs NER per line as well as per paragraph
+    (:func:`server.ner_es._iter_segments`): a page delivered as one long line
+    silently loses that pass, and names sitting on their own header line are the
+    exact case it exists to catch.
+    """
+    data = _fake_ocr_data([
+        ("Procedimiento", 1, 1, 1), ("282/2010", 1, 1, 1),
+        ("MENOR:", 1, 1, 2), ("JOSEPH", 1, 1, 2), ("PANTA", 1, 1, 2),
+        ("Vistas", 2, 1, 1), ("las", 2, 1, 1), ("diligencias", 2, 1, 1),
+    ])
+    text, coords = _ocr_a_blank_page(monkeypatch, tmp_path, data)
+
+    assert text == (
+        "Procedimiento 282/2010\n"
+        "MENOR: JOSEPH PANTA\n"
+        "\n"
+        "Vistas las diligencias\n"
+    )
+    assert len(text) == len(coords)
+
+
+def test_ocr_page_separators_have_no_rectangle(monkeypatch, tmp_path: Path):
+    """Synthetic separators must not be redactable: no glyph, so no rect."""
+    data = _fake_ocr_data([
+        ("Nombre", 1, 1, 1),
+        ("Juan", 1, 1, 2),
+        ("Otro", 2, 1, 1),
+    ])
+    text, coords = _ocr_a_blank_page(monkeypatch, tmp_path, data)
+
+    for index, char in enumerate(text):
+        if char.isspace():
+            assert coords[index].rect is None, f"separator at {index} has a rect"
+        else:
+            assert coords[index].rect is not None, f"glyph at {index} has no rect"
+        assert coords[index].from_ocr is True
+
+
+@pytest.mark.skipif(
+    __import__("shutil").which("tesseract") is None,
+    reason="tesseract binary not installed",
+)
+def test_real_ocr_of_a_scanned_page_keeps_one_line_per_line(tmp_path: Path):
+    """End-to-end: rasterise a text PDF, OCR it back, expect the same lines."""
+    pytest.importorskip("pytesseract")
+    pytest.importorskip("PIL.Image")
+    lines = [
+        "Procedimiento Expediente 282/2010",
+        "MENOR: JOSEPH KEVIN PANTA MINAYA",
+    ]
+    source = _write_pdf(tmp_path, lines, filename="text-layer.pdf")
+    doc = fitz.open(str(source))
+    pixmap = doc[0].get_pixmap(dpi=200)
+    scan = fitz.open()
+    page = scan.new_page(width=doc[0].rect.width, height=doc[0].rect.height)
+    page.insert_image(page.rect, pixmap=pixmap)
+    out = tmp_path / "scan.pdf"
+    scan.save(str(out)); scan.close(); doc.close()
+
+    pdf_ops.clear_extract_cache()
+    result = pdf_ops.extract_with_map(str(out))
+    assert result is not None
+    text, coords = result
+    assert len(text) == len(coords)
+    assert "MENOR: JOSEPH KEVIN PANTA MINAYA" in text
+    # The two source lines must not have been fused into one.
+    assert "282/2010\nMENOR:" in text

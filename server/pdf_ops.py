@@ -195,9 +195,31 @@ def _ocr_page(page, page_idx: int, fitz_mod, *, ocr_threads: int = 1):
     sy = page.rect.height / pix.height if pix.height else 1.0
     parts: list[str] = []
     coords: list[CharCoord] = []
+    previous_line: tuple[int, int, int] | None = None
     for i, word in enumerate(data["text"]):
         if not word:
             continue
+        # Reproduce the page's line and block structure, exactly as the
+        # text-layer path in :func:`_extract_page` does. Tesseract reports which
+        # block, paragraph and line each word belongs to, so the separators are
+        # not guesswork.
+        line_id = (
+            data["block_num"][i], data["par_num"][i], data["line_num"][i]
+        )
+        if previous_line is None:
+            separator = ""
+        elif line_id == previous_line:
+            separator = " "
+        elif line_id[:2] == previous_line[:2]:
+            separator = "\n"
+        else:
+            # New paragraph or new block: a blank line, so the analyzer treats
+            # the two sides as unrelated paragraphs.
+            separator = "\n\n"
+        previous_line = line_id
+        for ch in separator:
+            parts.append(ch)
+            coords.append(CharCoord(page_idx, None, from_ocr=True))
         left = data["left"][i] * sx
         top = data["top"][i] * sy
         width = data["width"][i] * sx
@@ -214,8 +236,6 @@ def _ocr_page(page, page_idx: int, fitz_mod, *, ocr_threads: int = 1):
                 rect=fitz_mod.Rect(x0, top, x1, top + height),
                 from_ocr=True,
             ))
-        parts.append(" ")
-        coords.append(CharCoord(page_idx, None, from_ocr=True))
     parts.append("\n")
     coords.append(CharCoord(page_idx, None, from_ocr=True))
     return "".join(parts), coords
