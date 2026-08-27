@@ -43,33 +43,33 @@ def test_smart_match_is_case_and_accent_insensitive(store: Store):
 
 
 def test_smart_match_is_whole_word(store: Store):
-    store.add("STEEL", label="EMPRESA")
-    hits = store.analyze("STEEL pero no STEELWORKS ni ACERO_STEEL")
+    store.add("OMEGA", label="EMPRESA")
+    hits = store.analyze("OMEGA pero no OMEGAWORKS ni ACERO_OMEGA")
     assert len(hits) == 1
-    assert hits[0].text == "STEEL"
+    assert hits[0].text == "OMEGA"
 
 
 def test_smart_match_tolerates_extra_whitespace(store: Store):
-    store.add("STEEL PROPERTY SL", label="EMPRESA")
-    hits = store.analyze("La mercantil STEEL   PROPERTY  SL comparece.")
+    store.add("OMEGA PROPERTY SL", label="EMPRESA")
+    hits = store.analyze("La mercantil OMEGA   PROPERTY  SL comparece.")
     assert len(hits) == 1
-    assert hits[0].text == "STEEL   PROPERTY  SL"
+    assert hits[0].text == "OMEGA   PROPERTY  SL"
 
 
 def test_smart_match_survives_surrounding_punctuation(store: Store):
-    store.add("HARDENED STEEL SL", label="EMPRESA")
-    hits = store.analyze("(HARDENED STEEL SL),")
+    store.add("HARDENED OMEGA SL", label="EMPRESA")
+    hits = store.analyze("(HARDENED OMEGA SL),")
     assert len(hits) == 1
-    assert hits[0].text == "HARDENED STEEL SL"
+    assert hits[0].text == "HARDENED OMEGA SL"
 
 
 # --- exact / regex ---------------------------------------------------------
 
 def test_exact_match_is_case_sensitive(store: Store):
-    store.add("Steel", label="EMPRESA", match="exact")
-    hits = store.analyze("Steel y steel y STEEL")
+    store.add("Omega", label="EMPRESA", match="exact")
+    hits = store.analyze("Omega y omega y OMEGA")
     assert len(hits) == 1
-    assert hits[0].text == "Steel"
+    assert hits[0].text == "Omega"
 
 
 def test_regex_match(store: Store):
@@ -95,10 +95,10 @@ def test_disabled_entry_is_not_matched(store: Store):
 def test_entries_persist_across_store_instances(tmp_path: Path):
     p = tmp_path / "d.json"
     s1 = Store(path=p)
-    s1.add("STEEL PROPERTY SL", label="EMPRESA")
+    s1.add("OMEGA PROPERTY SL", label="EMPRESA")
     s2 = Store(path=p)
-    assert [e.term for e in s2.all_entries()] == ["STEEL PROPERTY SL"]
-    assert s2.analyze("STEEL PROPERTY SL")
+    assert [e.term for e in s2.all_entries()] == ["OMEGA PROPERTY SL"]
+    assert s2.analyze("OMEGA PROPERTY SL")
 
 
 def test_add_deduplicates_same_smart_term(store: Store):
@@ -120,11 +120,11 @@ def test_import_merges_without_duplicates_keeping_local(store: Store):
     store.add("García", label="NOMBRE")
     result = store.import_terms([
         {"term": "garcia", "label": "OTRO"},          # duplicate → skipped
-        {"term": "STEEL PROPERTY SL", "label": "EMPRESA"},  # new → added
+        {"term": "OMEGA PROPERTY SL", "label": "EMPRESA"},  # new → added
     ])
     assert result == {"added": 1, "skipped": 1, "invalid": 0}
     terms = {e.term for e in store.all_entries()}
-    assert terms == {"García", "STEEL PROPERTY SL"}
+    assert terms == {"García", "OMEGA PROPERTY SL"}
     # Local label was kept, not overwritten by the import.
     garcia = next(e for e in store.all_entries() if e.term == "García")
     assert garcia.label == "NOMBRE"
@@ -144,13 +144,13 @@ def test_import_counts_invalid(store: Store):
 def test_export_roundtrips_through_import(tmp_path: Path):
     s1 = Store(path=tmp_path / "a.json")
     s1.add("García", label="NOMBRE")
-    s1.add("STEEL PROPERTY SL", label="EMPRESA", match="smart")
+    s1.add("OMEGA PROPERTY SL", label="EMPRESA", match="smart")
     exported = s1.export_terms()
 
     s2 = Store(path=tmp_path / "b.json")
     res = s2.import_terms(exported)
     assert res["added"] == 2
-    assert {e.term for e in s2.all_entries()} == {"García", "STEEL PROPERTY SL"}
+    assert {e.term for e in s2.all_entries()} == {"García", "OMEGA PROPERTY SL"}
 
 
 # --- labels ----------------------------------------------------------------
@@ -171,18 +171,18 @@ def test_pipeline_uses_custom_dictionary(tmp_path, monkeypatch):
 
     # Point the module-global store at a temp file and seed it.
     s = Store(path=tmp_path / "d.json")
-    s.add("STEEL PROPERTY SL", label="EMPRESA")
+    s.add("OMEGA PROPERTY SL", label="EMPRESA")
     monkeypatch.setattr(custom_dict, "get_store", lambda: s)
     # No spaCy noise, no opf spans.
     monkeypatch.setattr(pipeline.ner_es, "analyze", lambda text, *, strict: [])
 
-    text = "Comparece STEEL PROPERTY SL en el acto."
+    text = "Comparece OMEGA PROPERTY SL en el acto."
     stub = RedactionResult(
         schema_version="1", summary={}, text=text,
         detected_spans=(), redacted_text=text, warning=None,
     )
     result = pipeline.merge_and_redact(text, stub, mode="balanced")
-    assert "STEEL PROPERTY SL" not in result.redacted_text
+    assert "OMEGA PROPERTY SL" not in result.redacted_text
     assert "[EMPRESA_1]" in result.redacted_text
 
 
@@ -237,12 +237,12 @@ def test_api_list_empty(client):
 
 def test_api_add_list_delete(client):
     r = client.post("/api/dictionary",
-                    json={"term": "STEEL PROPERTY SL", "label": "EMPRESA"})
+                    json={"term": "OMEGA PROPERTY SL", "label": "EMPRESA"})
     assert r.status_code == 200
     entry_id = r.json()["id"]
 
     r = client.get("/api/dictionary")
-    assert [e["term"] for e in r.json()["terms"]] == ["STEEL PROPERTY SL"]
+    assert [e["term"] for e in r.json()["terms"]] == ["OMEGA PROPERTY SL"]
 
     r = client.delete(f"/api/dictionary/{entry_id}")
     assert r.status_code == 200
@@ -273,11 +273,11 @@ def test_api_import_and_export_roundtrip(client):
     client.post("/api/dictionary", json={"term": "García", "label": "NOMBRE"})
     r = client.post("/api/dictionary/import", json={"terms": [
         {"term": "garcia", "label": "OTRO"},                 # dup → skipped
-        {"term": "STEEL PROPERTY SL", "label": "EMPRESA"},   # new → added
+        {"term": "OMEGA PROPERTY SL", "label": "EMPRESA"},   # new → added
     ]})
     assert r.json() == {"added": 1, "skipped": 1, "invalid": 0}
 
     r = client.get("/api/dictionary/export")
     assert r.status_code == 200
     exported = r.json()
-    assert {t["term"] for t in exported["terms"]} == {"García", "STEEL PROPERTY SL"}
+    assert {t["term"] for t in exported["terms"]} == {"García", "OMEGA PROPERTY SL"}

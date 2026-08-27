@@ -81,9 +81,9 @@ def test_false_positive_lowers_precision(redact_fn):
 
 
 def test_dictionary_term_is_measured(redact_fn):
-    redact_fn.store.add("STEEL PROPERTY SL", label="EMPRESA")
-    text = "La mercantil STEEL PROPERTY SL comparece."
-    start = text.index("STEEL PROPERTY SL")
+    redact_fn.store.add("OMEGA PROPERTY SL", label="EMPRESA")
+    text = "La mercantil OMEGA PROPERTY SL comparece."
+    start = text.index("OMEGA PROPERTY SL")
     ex = Example(text, (GoldSpan(start, start + 17, "EMPRESA"),))
     report = evaluation.evaluate([ex], redact_fn)
     assert report.by_label["EMPRESA"]["recall"] == 1.0

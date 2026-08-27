@@ -301,7 +301,7 @@ def _looks_like_ocr_garbage(text: str) -> bool:
     if len(tokens) >= 2:
         # Only count *meaningless* short tokens. Spanish function words ("de",
         # "la") and bare numbers are legitimately short and appear inside real
-        # addresses ("Paseo de Pereda 9"), so excluding them keeps this rule
+        # addresses ("Paseo de Vidalba 9"), so excluding them keeps this rule
         # aimed at actual OCR debris ("Bs il ll il i ie", "Ç EI").
         tiny = sum(
             1 for t in tokens
@@ -400,7 +400,7 @@ def _looks_like_legal_entity(tokens: Sequence[str]) -> bool:
 # what comes right after it ("El compareciente X", "Firma en prueba de
 # conformidad X" — two intervening words), not something further down the line.
 # Without this bound, a heading like "COMPARECENCIA DE <nombre> - ACTA NUMERO
-# 77" rescued "ACTA NUMERO 77", because the trigger was still inside the
+# 77" rescued "ACTA NUMERO 12", because the trigger was still inside the
 # character window.
 _MAX_WORDS_AFTER_TRIGGER = 2
 
@@ -678,12 +678,12 @@ def is_probably_false_positive(
 
     # Nothing but known generic vocabulary → a description, not an entity.
     # A real name or address always contributes at least one word the lexicon
-    # doesn't know ("Pereda", "Comadrán", "García"). This is the rule that
+    # doesn't know ("Quirón", "Vidalba", "García"). This is the rule that
     # catches "Planta Sótano" / "Parcela Urbana" without a bespoke entry.
     #
     # It sits ABOVE the context rescue on purpose: a span in which every token
     # is known vocabulary is never a name, whatever precedes it. Measured on
-    # the synthetic corpus, moving it below let "ACTA NUMERO 77" through when a
+    # the synthetic corpus, moving it below let "ACTA NUMERO 12" through when a
     # heading ("COMPARECENCIA DE …") fell inside the context window.
     if all(_is_generic_token(t) for t in lowered):
         return True
@@ -733,7 +733,7 @@ def is_probably_false_positive(
         # usually a field label. Reviewed on a real tax document, every
         # single-token person span was a false positive: "Ganancia", "Renta",
         # "Dilaciones", "Donativos", "Mínimo", "nuda", "aaee". Keep it only when
-        # the preceding text actually announces a person ("D. Nekane"), which is
+        # the preceding text actually announces a person ("D. Iria"), which is
         # the one case where a lone first name is genuinely PII.
         #
         # Tokens carrying digits are a different class and exempt: a date
@@ -753,8 +753,8 @@ def is_probably_false_positive(
 
     # All-caps span where function words make up half or more of the tokens →
     # clause heading ("ASI COMO", "LUGAR EN EL QUE", "DE EMPLAZAMIENTO
-    # PERSONA A LA QUE SE"). Real all-caps names ("NOELIA LARA MARTIN",
-    # "JUAN DE DIOS VALENZUELA") stay well under the threshold.
+    # PERSONA A LA QUE SE"). Real all-caps names ("AURORA VIDALBA SERENA",
+    # "TOMAS DE JESUS QUIRON") stay well under the threshold.
     alpha_tokens = [t for t in tokens if any(c.isalpha() for c in t)]
     if len(alpha_tokens) >= 2 and all(t.isupper() for t in alpha_tokens):
         func_hits = sum(1 for t in lowered if t in _FUNCTION_WORDS)
@@ -797,8 +797,8 @@ def _is_trimmable_trailing_token(token: str) -> bool:
 def trim_trailing_role_words(text: str) -> tuple[str, int]:
     """Peel trailing role/label tokens from a span; return (new_text, chars_dropped).
 
-    Handles cases like "Mateo Ruiz Cano Domicilio" → ("Mateo Ruiz Cano", 10)
-    and "Dani Tipus d'enviament" → ("Dani", 20). The caller uses
+    Handles cases like "Nicolau Ferrera Bosch Domicilio" → ("Nicolau Ferrera Bosch", 10)
+    and "Iria Tipus d'enviament" → ("Iria", 20). The caller uses
     ``chars_dropped`` to shrink the span's ``end`` offset so ``text[start:end]``
     still reconstructs the visible entity exactly.
     """
@@ -923,7 +923,7 @@ def normalize_allcaps_runs(block: str) -> str | None:
 
     Why this exists: the spaCy models are case-sensitive and trained on
     mixed-case text. Measured with ``es_core_news_lg``, the same sentence in
-    caps yields fragments ("COMPARECENCIA"/MISC, "LOSTAU"/LOC) while the
+    caps yields fragments ("COMPARECENCIA"/MISC, "ELIZONDO"/LOC) while the
     title-cased copy yields the whole person name as PER. Spanish legal and tax
     documents put names in caps constantly — headings, appearances, tables — so
     without this pass those names are never even proposed, and no downstream
@@ -997,8 +997,8 @@ def analyze(text: str, *, strict: bool = True) -> list[NERSpan]:
                         context=contexto,
                     ):
                         continue
-                    # Trim trailing role/label tokens ("Mateo Ruiz Cano Domicilio"
-                    # → "Mateo Ruiz Cano", "Dani Tipus d'enviament" → "Dani").
+                    # Trim trailing role/label tokens ("Nicolau Ferrera Bosch Domicilio"
+                    # → "Nicolau Ferrera Bosch", "Iria Tipus d'enviament" → "Iria").
                     trimmed_text, dropped = trim_trailing_role_words(ent_text)
                     if dropped:
                         ent_text = trimmed_text

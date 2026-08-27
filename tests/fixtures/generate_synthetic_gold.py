@@ -275,7 +275,7 @@ CORPUS: list[tuple[str, str, list[str]]] = [
     ),
     (
         "trap",
-        "COMPARECENCIA DE «HERMENEGILDA LOSTAU BIZKARRA» - ACTA NUMERO 77",
+        "COMPARECENCIA DE «GARAZI ELIZONDO ZUBIZARRETA» - ACTA NUMERO 12",
         ["NOMBRE"],
     ),
     # ---------------- trampas: toponimo usado como apellido ---------------

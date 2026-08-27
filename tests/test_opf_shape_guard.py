@@ -118,7 +118,7 @@ def test_org_is_disabled_by_default():
     "text,context,expected",
     [
         # spaCy tags all-caps names as ORG; the trigger disambiguates.
-        ("HERMENEGILDA LOSTAU BIZKARRA", "COMPARECENCIA DE ", "PER"),
+        ("GARAZI ELIZONDO ZUBIZARRETA", "COMPARECENCIA DE ", "PER"),
         ("SATURNINO PELAYO GOIKOETXEA", "El compareciente ", "PER"),
         # "declaracion de" is deliberately NOT a trigger: in Spanish tax and
         # legal text it introduces a thing far more often than a person
@@ -150,13 +150,13 @@ def test_a_disabled_non_org_label_is_dropped():
 # --- all-caps case normalisation ------------------------------------------
 
 def test_all_caps_runs_are_normalised_preserving_length():
-    original = "COMPARECENCIA DE HERMENEGILDA LOSTAU BIZKARRA - ACTA NUMERO 77"
+    original = "COMPARECENCIA DE GARAZI ELIZONDO ZUBIZARRETA - ACTA NUMERO 12"
     normalised = ner_es.normalize_allcaps_runs(original)
     assert normalised is not None
     # Length must be preserved: offsets from the normalised view index straight
     # back into the original text.
     assert len(normalised) == len(original)
-    assert "Hermenegilda Lostau Bizkarra" in normalised
+    assert "Garazi Elizondo Zubizarreta" in normalised
 
 
 def test_text_without_all_caps_runs_is_not_normalised():

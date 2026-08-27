@@ -5,7 +5,7 @@ recognizers in :mod:`server.recognizers_es`). Any term the user adds here is
 redacted unconditionally and, like the validated recognizers, **bypasses the
 false-positive filter** — the user has explicitly asserted it is PII, so there
 is nothing to second-guess. This is the reliable way to cover case parties and
-entities the statistical models miss (e.g. ``STEEL PROPERTY SL``).
+entities the statistical models miss (e.g. ``OMEGA PROPERTY SL``).
 
 The dictionary is stored locally as JSON (never leaves the machine) and grows
 with use. It can be exported and imported to share and *complement* dictionaries
@@ -104,14 +104,14 @@ def _fold_with_map(text: str) -> tuple[str, list[int]]:
 def _word_boundary_regex(folded_term: str) -> re.Pattern:
     """Build a whole-word regex for a folded term, tolerant of inner whitespace."""
     # Split on whitespace, escape each token, rejoin allowing 1+ whitespace so
-    # "STEEL   PROPERTY" in the document still matches "STEEL PROPERTY".
+    # "OMEGA   PROPERTY" in the document still matches "OMEGA PROPERTY".
     tokens = folded_term.split()
     if not tokens:
         return re.compile(r"(?!x)x")  # matches nothing
     body = r"\s+".join(re.escape(t) for t in tokens)
     # Boundaries against word characters (letters/digits/underscore), so
     # punctuation next to the term (commas, parentheses) does not block a match,
-    # but "STEELWORKS" / "ACERO_STEEL" do not match "STEEL". The folded text is
+    # but "OMEGAWORKS" / "ACERO_OMEGA" do not match "OMEGA". The folded text is
     # lowercase ASCII, hence [0-9a-z_].
     return re.compile(rf"(?<![0-9a-z_]){body}(?![0-9a-z_])")
 

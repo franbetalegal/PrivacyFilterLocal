@@ -162,7 +162,7 @@ def _re(pat: str) -> re.Pattern:
 #
 # A Spanish postal address is recognisable by shape, and leaving it to the
 # statistical layers was losing it outright: measured on a real tax document,
-# "Cl. Sant Ferran, 0176 de Sabadell" survived redaction in full, and the next
+# "Cl. Vent del Nord, 0182 de Sabadell" survived redaction in full, and the next
 # address had only its street name removed — labelled NOMBRE, because "Frederic
 # Soler" is a person's name used as a street name.
 #
@@ -209,7 +209,7 @@ _FLOOR_DOOR = r"(?:\s*,?\s*(?:" + _FLOOR + r"|" + _DOOR + r")\.?){0,3}"
 _POSTCODE_AND_CITY = (
     r"(?:\s*,?\s*\d{5}(?:\s+" + _NAME_WORD + r"(?:\s+" + _NAME_WORD + r"){0,2})?)?"
 )
-# "…, 0176 de Sabadell" — no postcode, the municipality hangs off "de".
+# "…, 0182 de Sabadell" — no postcode, the municipality hangs off "de".
 _CITY_AFTER_DE = r"(?:\s+de\s+" + _NAME_WORD + r"(?:\s+" + _NAME_WORD + r"){0,2})?"
 
 
@@ -295,8 +295,8 @@ _RECOGNIZERS: tuple[_Recognizer, ...] = (
     ),
     _Recognizer(
         entity_type="ES_REGISTRY_REF",
-        # Land/company registry locators: "Tomo 4097", "Libro 916",
-        # "Folio 64", "Hoja 286", "Inscripción 4", "Finca Registral 817".
+        # Land/company registry locators: "Tomo 1234", "Libro 567",
+        # "Folio 89", "Hoja 321", "Inscripción 4", "Finca Registral 654".
         #
         # These need their own deterministic recognizer precisely *because*
         # "tomo"/"libro"/"folio"/"hoja" live in the boilerplate lexicon used to
@@ -380,9 +380,9 @@ _RECOGNIZERS: tuple[_Recognizer, ...] = (
         entity_type="ES_STREET_ADDRESS",
         # Spanish postal addresses have a recognisable shape, and leaving them
         # to the statistical layers was losing them outright: measured on a real
-        # tax document, "Cl. Sant Ferran, 0176 de Sabadell" survived redaction
+        # tax document, "Cl. Vent del Nord, 0182 de Sabadell" survived redaction
         # in full, while the next address had only its street name removed — and
-        # labelled NOMBRE, because "Frederic Soler" is a person's name used as a
+        # labelled NOMBRE, because "Nicolau Ferrera" is a person's name used as a
         # street name.
         #
         # TWO independent signals are required, a street-type marker AND a house
@@ -397,10 +397,10 @@ _RECOGNIZERS: tuple[_Recognizer, ...] = (
             # part below was added because a real address failed without it.
             _STREET_MARKER          # "Cl.", "calle", "avenida" — any case
             # Punctuation may sit between marker and name: PDF extraction
-            # produced "Cl., Frederic Soler" in one of three occurrences of the
+            # produced "Cl., Nicolau Ferrera" in one of three occurrences of the
             # same address, and requiring plain whitespace lost exactly that one.
             + r"[\s,]+"
-            + _STREET_NAME          # "Sant Ferran", "del Molino Viejo",
+            + _STREET_NAME          # "Vent del Nord", "del Molino Viejo",
                                     # "Herreria de los Olmos"
             + r"[,\s]+" + _HOUSE_NUMBER   # second signal: "14", "s/n", "nº 3"
             + _FLOOR_DOOR           # optional "3º B", "bajo", "esc. 2"

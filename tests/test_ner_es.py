@@ -214,9 +214,9 @@ def test_new_catalan_fillers_are_filtered(word):
 # --- Trailing role-word trimming ------------------------------------------
 
 @pytest.mark.parametrize("raw, expected", [
-    ("Mateo Ruiz Cano Domicilio", "Mateo Ruiz Cano"),
-    ("NOELIA LARA Parte", "NOELIA LARA"),
-    ("Mateo Ruiz Cano MARTIN Procurador", "Mateo Ruiz Cano MARTIN"),
+    ("Nicolau Ferrera Bosch Domicilio", "Nicolau Ferrera Bosch"),
+    ("AURORA VIDALBA Parte", "AURORA VIDALBA"),
+    ("Nicolau Ferrera Bosch SERENA Procurador", "Nicolau Ferrera Bosch SERENA"),
     ("Mónica Llovet Perez Abogado", "Mónica Llovet Perez"),
     ("Juan García Domicilio Adreça", "Juan García"),  # peels multiple
 ])
@@ -235,16 +235,16 @@ def test_trim_no_op_when_no_trailing_role():
 def test_trim_catalan_contractions():
     """d'enviament / l'hospital are article contractions, never proper nouns."""
     trimmed, dropped = ner_es.trim_trailing_role_words(
-        "Dani Tipus d'enviament"
+        "Iria Tipus d'enviament"
     )
-    assert trimmed == "Dani"
-    assert dropped == len("Dani Tipus d'enviament") - len("Dani")
+    assert trimmed == "Iria"
+    assert dropped == len("Iria Tipus d'enviament") - len("Iria")
 
 
 def test_allcaps_real_name_survives_function_word_ratio():
-    """Regression: NOELIA LARA MARTIN must NOT be filtered as a heading."""
+    """Regression: AURORA VIDALBA SERENA must NOT be filtered as a heading."""
     assert (
-        ner_es.is_probably_false_positive("NOELIA LARA MARTIN") is False
+        ner_es.is_probably_false_positive("AURORA VIDALBA SERENA") is False
     )
 
 
@@ -381,7 +381,7 @@ def test_bare_municipality_rejected_for_loc_label(place):
 
 
 @pytest.mark.parametrize("address", [
-    "Calle Comadrán 5", "Paseo de Pereda 9", "Urbanización Sa Marina",
+    "Calle Vidalba 5", "Paseo de Vidalba 9", "Urbanización Els Pinars",
     "carrer Balmes 22",
 ])
 def test_real_addresses_survive(address):
@@ -390,10 +390,10 @@ def test_real_addresses_survive(address):
 
 
 @pytest.mark.parametrize("name", [
-    "Juan José LALLAVE CARMONA", "NOELIA LARA MARTIN",
+    "Marc Josep VALDRICH BONFILL", "AURORA VIDALBA SERENA",
     "Yvonne Fontquerni Coloma", "Don Manuel Piquer Belloch",
     "Eloísa López-Monís Gallego", "Mónica Llovet Perez",
-    "José María de Prada Díez", "JUAN DE DIOS VALENZUELA",
+    "Marc Antoni de Solans Miralpeix", "TOMAS DE JESUS QUIRON",
 ])
 def test_real_person_names_survive(name):
     """The whole point: none of the new rules may drop a real person."""

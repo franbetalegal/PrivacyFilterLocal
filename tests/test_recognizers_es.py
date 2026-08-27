@@ -215,8 +215,8 @@ def test_analyze_positions_are_original_offsets():
 # --- Registry / cadastral identifiers -------------------------------------
 
 @pytest.mark.parametrize("ref", [
-    "Tomo 4097", "Libro 916", "Folio 64", "Hoja 286", "Inscripción 4",
-    "Finca Registral 817", "Sección 1", "Foli 12", "Llibre 5",
+    "Tomo 1234", "Libro 567", "Folio 89", "Hoja 321", "Inscripción 4",
+    "Finca Registral 654", "Sección 1", "Foli 12", "Llibre 5",
 ])
 def test_registry_references_detected(ref):
     """Registry locators must be caught by the *deterministic* layer.

@@ -200,10 +200,11 @@ adds two local layers tuned for Spanish/Catalan legal documents:
    A false-positive filter drops section headings, form labels, public
    institutions/regions (not personal data), URLs, tax and accounting
    vocabulary, file names and OCR garbage, and trims role words off both ends
-   (`Mateo Ruiz Cano Domicilio` → `Mateo Ruiz Cano`). A lone capitalised word
-   needs a person trigger in front of it to count as a name, and conversely a
-   surname that collides with contract vocabulary — "Banco", "Construcción" and
-   "Contrato" are real Spanish surnames — is rescued when one does.
+   (`Nicolau Ferrera Bosch Domicilio` → `Nicolau Ferrera Bosch`). A lone
+   capitalised word needs a person trigger in front of it to count as a name,
+   and conversely a surname that collides with contract vocabulary — "Banco",
+   "Construcción" and "Contrato" are real Spanish surnames — is rescued when
+   one does.
 
 `server/pipeline.py` merges the three sources (deterministic > opf > NER on
 overlap) and applies the consistent pseudonymisation.

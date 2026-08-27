@@ -1,9 +1,9 @@
 """Tests for the deterministic Spanish street-address recognizer.
 
 Written from a real failure. On a 28-page tax document the taxpayer's property
-address survived redaction in full ("Cl. Sant Ferran, 0176 de Sabadell"), and
+address survived redaction in full ("Cl. Vent del Nord, 0182 de Sabadell"), and
 the second address had only its street name removed — labelled NOMBRE, because
-"Frederic Soler" is a person's name used as a street name. Leaving addresses to
+"Nicolau Ferrera" is a person's name used as a street name. Leaving addresses to
 the statistical layers was losing them.
 
 Every address below is invented. The negative cases are the ones that matter
@@ -33,13 +33,13 @@ def _addresses(text: str) -> list[str]:
     [
         # Marker + name + number + municipality after "de".
         (
-            "Vivienda situada en Cl. Sant Ferran, 0176 de Sabadell.",
-            "Cl. Sant Ferran, 0176 de Sabadell",
+            "Vivienda situada en Cl. Vent del Nord, 0182 de Sabadell.",
+            "Cl. Vent del Nord, 0182 de Sabadell",
         ),
         # "s/n" is the second signal when a plot has no number.
         (
-            "terreno urbano situado en Cl. Frederic Soler s/n de Sabadell",
-            "Cl. Frederic Soler s/n de Sabadell",
+            "terreno urbano situado en Cl. Nicolau Ferrera s/n de Sabadell",
+            "Cl. Nicolau Ferrera s/n de Sabadell",
         ),
         # Lowercase marker, several connectors inside the name, floor, door,
         # postcode and municipality.
@@ -70,10 +70,10 @@ def test_addresses_are_caught_with_exact_boundaries(text, expected):
 # --- extraction artifacts ------------------------------------------------
 
 def test_a_comma_between_marker_and_name_is_tolerated():
-    # PDF extraction produced "Cl., Frederic Soler" in one of three occurrences
+    # PDF extraction produced "Cl., Nicolau Ferrera" in one of three occurrences
     # of the same address; requiring plain whitespace lost exactly that one.
-    text = "terreno urbano en Cl., Frederic Soler s/n de Sabadell, con"
-    assert _addresses(text) == ["Cl., Frederic Soler s/n de Sabadell"]
+    text = "terreno urbano en Cl., Nicolau Ferrera s/n de Sabadell, con"
+    assert _addresses(text) == ["Cl., Nicolau Ferrera s/n de Sabadell"]
 
 
 def test_a_line_break_inside_the_address_is_tolerated():

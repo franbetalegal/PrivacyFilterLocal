@@ -13,7 +13,7 @@ Two tiers matter:
 
 ``GENERIC_SINGLE``
     Words that are noise *on their own* but legitimately appear inside real
-    entities ("Plaza Mayor de Madrid", "Calle Comadrán"). Only reject when the
+    entities ("Plaza Mayor de Madrid", "Calle Vidalba"). Only reject when the
     span is that single word.
 
 The remaining sets drive specific rules (verbs, numerals, street-type markers,
@@ -325,7 +325,7 @@ REGIONS = frozenset({
 })
 
 # --- Street-type markers: presence means "this is an address" ------------
-# Used to tell a real address ("Calle Comadrán 5") from a bare municipality
+# Used to tell a real address ("Calle Vidalba 5") from a bare municipality
 # ("Barcelona"), which is not personal data on its own.
 STREET_MARKERS = frozenset({
     "calle", "c/", "cl", "carrer", "avenida", "avda", "avda.", "av", "av.",

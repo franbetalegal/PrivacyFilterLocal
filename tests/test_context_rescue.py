@@ -168,15 +168,15 @@ def test_the_context_window_is_bounded():
 
 
 def test_a_trigger_does_not_reach_across_a_name():
-    # Regression: "COMPARECENCIA DE <nombre> - ACTA NUMERO 77" rescued the
-    # trailing "ACTA NUMERO 77" because the trigger was still inside the
+    # Regression: "COMPARECENCIA DE <nombre> - ACTA NUMERO 12" rescued the
+    # trailing "ACTA NUMERO 12" because the trigger was still inside the
     # character window. A trigger governs the next word or two, not a span
     # three words down the line.
-    context = "COMPARECENCIA DE HERMENEGILDA LOSTAU BIZKARRA - "
+    context = "COMPARECENCIA DE GARAZI ELIZONDO ZUBIZARRETA - "
     assert ner_es.has_person_trigger(context) is False
     assert (
         ner_es.is_probably_false_positive(
-            "ACTA NUMERO 77", label="ES_NER_ORG", context=context
+            "ACTA NUMERO 12", label="ES_NER_ORG", context=context
         )
         is True
     )
@@ -280,7 +280,7 @@ def test_a_lone_first_name_survives_with_a_trigger():
     # The one case where a lone word IS personal data: something announces it.
     assert (
         ner_es.is_probably_false_positive(
-            "Nekane", label="ES_NER_PER", context="Dona "
+            "Iria", label="ES_NER_PER", context="Dona "
         )
         is False
     )
