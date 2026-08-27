@@ -49,6 +49,41 @@ _MIN_OCR_PAGES_FOR_PARALLEL = 3
 _MIN_OCR_DPI = 150
 
 
+def _ocr_line_breaks_enabled() -> bool:
+    """Whether OCRed pages carry their line breaks (``PF_OCR_LINE_BREAKS``).
+
+    On by default. One line of the page becomes one line of text, which is what
+    lets the analyzer run NER per line as well as per paragraph (see
+    :func:`server.ner_es._iter_segments`) — the pass that catches a name sitting
+    alone on a header line.
+
+    Measured on a real 4-page scanned court order, comparing the same document
+    joined by spaces against the same document with line breaks:
+
+    * the person named on the "MENOR: <name>" header line was found only with
+      line breaks, in every operating point. Joined by spaces that line sits in
+      a header soup ("... Expediente 282/2010 Sección G MENOR: <name> AUTO En
+      Barcelona, a ...") and spaCy proposes nothing at all for the region;
+    * the addressee's name came out whole ("RUBEN FERRER MARTIN") instead of as
+      two wrong fragments, and the address came out whole too;
+    * the case numbers were LOST, because the transformer had been reading them
+      out of the surrounding line. That is repaired at the source instead:
+      ``ES_CASE_NUMBER`` in :mod:`server.recognizers_es` now matches them
+      deterministically, so a number that identifies a case no longer depends
+      on how the OCR laid out the page.
+
+    Block and paragraph boundaries deliberately do NOT become blank lines.
+    Tesseract splits a noisy scan into blocks freely — a watermark or a column
+    becomes its own block — and a blank line there would cut the context both
+    models depend on.
+
+    The environment variable stays as the escape hatch: set it to 0 to get the
+    previous whole-page-as-one-line behaviour on a document where this reads
+    worse.
+    """
+    return os.environ.get("PF_OCR_LINE_BREAKS", "1").strip() not in ("", "0")
+
+
 @dataclass(frozen=True)
 class CharCoord:
     """Where the i-th character of the extracted text lives on the page.
@@ -195,28 +230,23 @@ def _ocr_page(page, page_idx: int, fitz_mod, *, ocr_threads: int = 1):
     sy = page.rect.height / pix.height if pix.height else 1.0
     parts: list[str] = []
     coords: list[CharCoord] = []
+    line_breaks = _ocr_line_breaks_enabled()
     previous_line: tuple[int, int, int] | None = None
     for i, word in enumerate(data["text"]):
         if not word:
             continue
-        # Reproduce the page's line and block structure, exactly as the
-        # text-layer path in :func:`_extract_page` does. Tesseract reports which
-        # block, paragraph and line each word belongs to, so the separators are
-        # not guesswork.
-        line_id = (
-            data["block_num"][i], data["par_num"][i], data["line_num"][i]
-        )
-        if previous_line is None:
-            separator = ""
-        elif line_id == previous_line:
-            separator = " "
-        elif line_id[:2] == previous_line[:2]:
-            separator = "\n"
+        separator = " " if previous_line is not None else ""
+        if line_breaks:
+            # Tesseract reports which block, paragraph and line each word
+            # belongs to, so a line break is read from it rather than guessed.
+            line_id = (
+                data["block_num"][i], data["par_num"][i], data["line_num"][i]
+            )
+            if previous_line is not None and line_id != previous_line:
+                separator = "\n"
+            previous_line = line_id
         else:
-            # New paragraph or new block: a blank line, so the analyzer treats
-            # the two sides as unrelated paragraphs.
-            separator = "\n\n"
-        previous_line = line_id
+            previous_line = ()
         for ch in separator:
             parts.append(ch)
             coords.append(CharCoord(page_idx, None, from_ocr=True))
@@ -379,6 +409,21 @@ def _get_pdf_pool(size: int) -> ProcessPoolExecutor:
         return _pdf_pool
 
 
+def _shutdown_pdf_pool() -> None:
+    """Drop the page-extraction pool so the next call builds a fresh one.
+
+    A broken pool stays broken: every later submit raises immediately. Without
+    this, one failed document would push the whole process onto the sequential
+    path for good.
+    """
+    global _pdf_pool, _pdf_pool_size
+    with _pdf_pool_lock:
+        if _pdf_pool is not None:
+            _pdf_pool.shutdown(wait=False)
+        _pdf_pool = None
+        _pdf_pool_size = 0
+
+
 def extract_with_map(pdf_path: str) -> Optional[tuple[str, list[CharCoord]]]:
     """Extract text + char coordinates from every page. ``None`` on failure.
 
@@ -424,44 +469,66 @@ def extract_with_map(pdf_path: str) -> Optional[tuple[str, list[CharCoord]]]:
     all_parts: list[str] = []
     all_coords: list[CharCoord] = []
 
-    if workers <= 1 or ocr_pages < _MIN_OCR_PAGES_FOR_PARALLEL:
-        # Sequential: one process, one page at a time. Tesseract may use the
-        # full core budget for each page's own OCR since nothing else is
-        # running concurrently. Text-layer PDFs always take this path — they're
-        # fast enough that process-spawn overhead would only slow them down.
+    def _sequential() -> list:
+        # One process, one page at a time. Tesseract may use the full core
+        # budget for each page's own OCR since nothing else is running
+        # concurrently. Text-layer PDFs always take this path — they're fast
+        # enough that process-spawn overhead would only slow them down.
         logger.info(
             "PDF extract sequential: %d pages (%d need OCR), workers=%d",
             num_pages, ocr_pages, concurrency.worker_count(),
         )
-        chunk = _extract_page_range(
+        return _extract_page_range(
             pdf_path, 0, num_pages, fitz, ocr_threads=concurrency.worker_count()
         )
-        for page_idx, page_text, page_coords in chunk:
-            all_parts.append(page_text)
-            all_coords.extend(page_coords)
-            all_parts.append("\n")
-            all_coords.append(CharCoord(page_idx, None))
+
+    chunks: list[list] = []
+    if workers <= 1 or ocr_pages < _MIN_OCR_PAGES_FOR_PARALLEL:
+        chunks = [_sequential()]
     else:
         ranges = _split_ranges(num_pages, workers)
         logger.info(
             "PDF extract parallel: %d pages (%d OCR) → %d workers, ranges=%s",
             num_pages, ocr_pages, len(ranges), ranges,
         )
-        pool = _get_pdf_pool(len(ranges))
-        futures = [
-            pool.submit(_extract_page_range_worker, pdf_path, start, end)
-            for start, end in ranges
-        ]
-        chunks = [f.result() for f in futures]
-        for chunk in chunks:
-            for page_idx, page_text, coord_tuples in chunk:
-                all_parts.append(page_text)
-                all_coords.extend(
-                    CharCoord(pi, None if rect is None else fitz.Rect(*rect), from_ocr)
-                    for pi, rect, from_ocr in coord_tuples
+        try:
+            pool = _get_pdf_pool(len(ranges))
+            futures = [
+                pool.submit(_extract_page_range_worker, pdf_path, start, end)
+                for start, end in ranges
+            ]
+            chunks = [f.result() for f in futures]
+        except Exception as exc:  # noqa: BLE001
+            # Parallel extraction is an optimisation; losing it must not lose
+            # the document. A worker dying takes the whole pool down with it
+            # (BrokenProcessPool) and every pending page with it — reproduced on
+            # a real 4-page scanned court order, where each spawned worker
+            # re-imports the server package, torch included, and the machine
+            # could not carry four of those at once. The pages themselves
+            # extract fine one at a time.
+            logger.warning(
+                "Parallel PDF extraction failed (%s: %s); "
+                "falling back to sequential.", type(exc).__name__, exc,
+            )
+            _shutdown_pdf_pool()
+            chunks = [_sequential()]
+
+    # Workers hand back plain tuples (a fitz.Rect is not something to rely on
+    # pickling across a process boundary); the in-process path hands back
+    # CharCoord directly. Accept both so the fallback needs no special casing.
+    for chunk in chunks:
+        for page_idx, page_text, page_coords in chunk:
+            all_parts.append(page_text)
+            all_coords.extend(
+                coord if isinstance(coord, CharCoord) else CharCoord(
+                    coord[0],
+                    None if coord[1] is None else fitz.Rect(*coord[1]),
+                    coord[2],
                 )
-                all_parts.append("\n")
-                all_coords.append(CharCoord(page_idx, None))
+                for coord in page_coords
+            )
+            all_parts.append("\n")
+            all_coords.append(CharCoord(page_idx, None))
 
     text = "".join(all_parts)
     assert len(text) == len(all_coords), "coord map / text length mismatch"

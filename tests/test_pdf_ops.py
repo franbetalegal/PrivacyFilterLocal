@@ -456,8 +456,9 @@ def _fake_ocr_data(words: list[tuple[str, int, int, int]]) -> dict:
     return data
 
 
-def _ocr_a_blank_page(monkeypatch, tmp_path: Path, data: dict):
+def _ocr_a_blank_page(monkeypatch, tmp_path: Path, data: dict, *, line_breaks: bool = True):
     """Run ``_ocr_page`` over a blank page with ``pytesseract`` stubbed out."""
+    monkeypatch.setenv("PF_OCR_LINE_BREAKS", "1" if line_breaks else "0")
     monkeypatch.setitem(sys.modules, "pytesseract", _FakeTesseract(data))
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
@@ -467,15 +468,33 @@ def _ocr_a_blank_page(monkeypatch, tmp_path: Path, data: dict):
         doc.close()
 
 
-def test_ocr_page_separates_lines_and_paragraphs(monkeypatch, tmp_path: Path):
-    """OCR output must carry the page's line and block structure.
+def test_ocr_page_can_join_the_whole_page_as_one_line(monkeypatch, tmp_path: Path):
+    """``PF_OCR_LINE_BREAKS=0``: one space between words, one newline at the end.
 
-    The text-layer path in :func:`server.pdf_ops._extract_page` emits a newline
-    per line and a second one per block. The OCR path has to match, because the
-    analyzer runs NER per line as well as per paragraph
-    (:func:`server.ner_es._iter_segments`): a page delivered as one long line
-    silently loses that pass, and names sitting on their own header line are the
-    exact case it exists to catch.
+    The escape hatch, and the behaviour every release before this one had. See
+    :func:`server.pdf_ops._ocr_line_breaks_enabled` for what was measured.
+    """
+    data = _fake_ocr_data([
+        ("Procedimiento", 1, 1, 1), ("282/2010", 1, 1, 1),
+        ("MENOR:", 1, 1, 2), ("JOSEPH", 1, 1, 2), ("PANTA", 1, 1, 2),
+        ("Vistas", 2, 1, 1), ("las", 2, 1, 1), ("diligencias", 2, 1, 1),
+    ])
+    text, coords = _ocr_a_blank_page(monkeypatch, tmp_path, data, line_breaks=False)
+
+    assert text == (
+        "Procedimiento 282/2010 MENOR: JOSEPH PANTA Vistas las diligencias\n"
+    )
+    assert len(text) == len(coords)
+
+
+def test_ocr_page_separates_lines_by_default(monkeypatch, tmp_path: Path):
+    """One line of the page is one line of text.
+
+    Line breaks are what let the analyzer run NER per line as well as per
+    paragraph (:func:`server.ner_es._iter_segments`), the pass that catches a
+    name sitting alone on a header line. Blocks and paragraphs deliberately do
+    NOT become blank lines: Tesseract splits a noisy scan into blocks freely,
+    and a blank line would cut the surrounding context both models rely on.
     """
     data = _fake_ocr_data([
         ("Procedimiento", 1, 1, 1), ("282/2010", 1, 1, 1),
@@ -487,9 +506,9 @@ def test_ocr_page_separates_lines_and_paragraphs(monkeypatch, tmp_path: Path):
     assert text == (
         "Procedimiento 282/2010\n"
         "MENOR: JOSEPH PANTA\n"
-        "\n"
         "Vistas las diligencias\n"
     )
+    assert "\n\n" not in text
     assert len(text) == len(coords)
 
 
@@ -514,7 +533,7 @@ def test_ocr_page_separators_have_no_rectangle(monkeypatch, tmp_path: Path):
     __import__("shutil").which("tesseract") is None,
     reason="tesseract binary not installed",
 )
-def test_real_ocr_of_a_scanned_page_keeps_one_line_per_line(tmp_path: Path):
+def test_real_ocr_of_a_scanned_page_keeps_one_line_per_line(tmp_path: Path, monkeypatch):
     """End-to-end: rasterise a text PDF, OCR it back, expect the same lines."""
     pytest.importorskip("pytesseract")
     pytest.importorskip("PIL.Image")
@@ -531,6 +550,7 @@ def test_real_ocr_of_a_scanned_page_keeps_one_line_per_line(tmp_path: Path):
     out = tmp_path / "scan.pdf"
     scan.save(str(out)); scan.close(); doc.close()
 
+    monkeypatch.setenv("PF_OCR_LINE_BREAKS", "1")
     pdf_ops.clear_extract_cache()
     result = pdf_ops.extract_with_map(str(out))
     assert result is not None
@@ -539,3 +559,61 @@ def test_real_ocr_of_a_scanned_page_keeps_one_line_per_line(tmp_path: Path):
     assert "MENOR: JOSEPH KEVIN PANTA MINAYA" in text
     # The two source lines must not have been fused into one.
     assert "282/2010\nMENOR:" in text
+
+
+# --- Parallel extraction failure -------------------------------------------
+
+
+def test_a_broken_worker_pool_falls_back_to_sequential(tmp_path: Path, monkeypatch):
+    """Parallel extraction is an optimisation; its failure must not lose pages.
+
+    A worker dying takes the whole pool down (BrokenProcessPool) and every
+    pending page with it, and the exception used to propagate straight out of
+    `extract_with_map` past its own `Optional` contract. Reproduced on a real
+    4-page scanned court order: each spawned worker re-imports the server
+    package, torch included, and the machine could not carry four at once,
+    while the same pages extract fine one at a time.
+    """
+    from concurrent.futures.process import BrokenProcessPool
+
+    pdf = _write_pdf(tmp_path, ["Nombre: Juan Garcia Perez", "DNI 12345678Z"])
+    # Force the parallel branch on a text-layer PDF, then break it.
+    monkeypatch.setattr(pdf_ops, "_MIN_OCR_PAGES_FOR_PARALLEL", 0)
+    monkeypatch.setattr(pdf_ops.concurrency, "worker_count", lambda: 4)
+
+    class _DeadPool:
+        def submit(self, *args, **kwargs):
+            raise BrokenProcessPool("worker died")
+
+    monkeypatch.setattr(pdf_ops, "_get_pdf_pool", lambda size: _DeadPool())
+    pdf_ops.clear_extract_cache()
+
+    result = pdf_ops.extract_with_map(str(pdf))
+
+    assert result is not None
+    text, coords = result
+    assert "Juan Garcia Perez" in text
+    assert "12345678Z" in text
+    assert len(text) == len(coords)
+
+
+def test_a_broken_pool_is_dropped_so_the_next_document_retries_parallel(monkeypatch):
+    """A broken pool stays broken: every later submit raises immediately.
+
+    Without dropping it, one bad document would pin the whole process to the
+    sequential path for the rest of its life.
+    """
+    shutdown_called = []
+
+    class _Pool:
+        def shutdown(self, wait=True):
+            shutdown_called.append(wait)
+
+    monkeypatch.setattr(pdf_ops, "_pdf_pool", _Pool())
+    monkeypatch.setattr(pdf_ops, "_pdf_pool_size", 4)
+
+    pdf_ops._shutdown_pdf_pool()
+
+    assert shutdown_called == [False]
+    assert pdf_ops._pdf_pool is None
+    assert pdf_ops._pdf_pool_size == 0
