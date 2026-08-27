@@ -17,6 +17,7 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+from app_update import GITHUB_REPO
 from server import PROJECT_DIR, inference
 
 logger = logging.getLogger("privacy_filter.updates")
@@ -56,6 +57,11 @@ def _rebuild_frontend() -> tuple[bool, str]:
     frontend = PROJECT_DIR / "frontend"
     if not frontend.is_dir():
         return True, "no frontend to build"
+    # An install unpacked from a release archive carries frontend/dist prebuilt
+    # and no sources, so there is nothing to build and pnpm would fail on the
+    # missing package.json. Only a checkout has one.
+    if not (frontend / "package.json").is_file():
+        return True, "frontend already built (no sources to build from)"
     # Node/pnpm are build-time only and usually absent on end-user machines
     # (especially Linux). Skip gracefully rather than fail the whole update;
     # the previously built frontend/dist stays in place.
@@ -96,6 +102,42 @@ def restart_server() -> None:
     os._exit(0)
 
 
+def _reinstall_dependencies(message: str) -> tuple[bool, str]:
+    """Reinstall the bundled ``opf`` package and pinned server requirements.
+
+    An archive install replaces the files under ``privacy-filter/`` and the
+    pins in ``requirements-server.txt``, but the venv still holds what the
+    previous version installed. Without this the update ships new sources and
+    keeps running the old wheel.
+
+    Best effort: a failure here leaves an installed, working previous
+    environment with new sources on disk, which the restart will surface
+    normally, so it is reported as a warning rather than failing the update.
+    """
+    venv_py = _venv_python()
+    package = PROJECT_DIR / "privacy-filter"
+    requirements = PROJECT_DIR / "requirements-server.txt"
+    steps: list[list[str]] = []
+    if package.is_dir():
+        steps.append([venv_py, "-m", "pip", "install", str(package)])
+    if requirements.is_file():
+        steps.append([venv_py, "-m", "pip", "install", "-r", str(requirements)])
+    for step in steps:
+        try:
+            result = subprocess.run(
+                step, cwd=str(PROJECT_DIR), capture_output=True, text=True,
+                timeout=900,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Dependency reinstall failed: %s", exc)
+            return True, f"{message} (warning: dependency reinstall failed: {exc})"
+        if result.returncode != 0:
+            tail = (result.stderr or "")[-500:]
+            logger.warning("Dependency reinstall failed: %s", tail)
+            return True, f"{message} (warning: dependency reinstall failed: {tail})"
+    return True, message
+
+
 def install_app_update() -> dict:
     """Download/pull the latest app version and schedule a restart."""
     from app_update import check_for_app_update, download_and_install_update
@@ -106,8 +148,24 @@ def install_app_update() -> dict:
 
     if info.download_url:
         success, message = download_and_install_update(info.download_url)
+        if success:
+            success, message = _reinstall_dependencies(message)
+    elif not (PROJECT_DIR / ".git").exists():
+        # No archive for this platform and nothing to pull: an install unpacked
+        # from a release archive on a platform we do not build one for, or a
+        # folder someone copied out of a checkout. Say what to do instead of
+        # failing with a git error about a directory that is not a repository.
+        return {
+            "status": "error",
+            "message": (
+                f"Version {info.latest_version} is available but cannot be "
+                "installed automatically on this platform. Download it from "
+                f"https://github.com/{GITHUB_REPO}/releases/latest and unpack "
+                "it over this folder."
+            ),
+        }
     else:
-        # No ZIP asset attached to the release: fall back to git pull + pip.
+        # A checkout: pull the new code instead of unpacking an archive over it.
         try:
             result = subprocess.run(
                 ["git", "pull", "origin", "main"],

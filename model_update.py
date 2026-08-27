@@ -17,6 +17,10 @@ from typing import Callable, Optional
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 
+# Shared so both update checks verify against the same CA bundle; see
+# app_update.ssl_context for why the platform default is not enough.
+from app_update import ssl_context
+
 logger = logging.getLogger("privacy_filter.model_update")
 
 # Ensure privacy-filter package is importable
@@ -88,7 +92,7 @@ def get_remote_model_date() -> Optional[str]:
             "Accept": "application/json",
             "User-Agent": "PrivacyFilter-App",
         })
-        with urlopen(req, timeout=10) as response:
+        with urlopen(req, timeout=10, context=ssl_context()) as response:
             data = json.loads(response.read().decode("utf-8"))
 
         last_modified = data.get("lastModified") or data.get("last_modified")

@@ -37,3 +37,10 @@ langdetect==1.0.9
 # Also `llm_client=None` is set at construction, so images cannot be sent to
 # an external model for captioning.
 markitdown[pdf,docx,pptx,xlsx,xls,outlook]==0.1.7
+# CA bundle for the update checks. Already present transitively (via
+# huggingface_hub → requests), pinned here because app_update now verifies
+# against it directly: a python.org framework Python on macOS has no CA store
+# of its own until the user runs Install Certificates.command, so without this
+# every urlopen to GitHub fails with CERTIFICATE_VERIFY_FAILED and the app
+# silently never reports an update.
+certifi==2026.7.22
