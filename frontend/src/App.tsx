@@ -28,6 +28,19 @@ const TABS: { key: TabKey; label: string }[] = [
 
 export default function App() {
   const [tab, setTab] = useState<TabKey>("text");
+  // Tabs are mounted the first time they are opened and then kept mounted.
+  // They used to be unmounted on every switch, which destroyed whatever the tab
+  // was holding: leaving the Archivos tab mid-analysis threw away the file, the
+  // detected spans and the review selection, while the upload carried on
+  // server-side with nowhere to land. It also made the evaluation checkbox
+  // unusable, since the example is saved in the second step and the file needed
+  // for that step was already gone.
+  const [opened, setOpened] = useState<Set<TabKey>>(() => new Set<TabKey>(["text"]));
+
+  function openTab(key: TabKey) {
+    setOpened((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+    setTab(key);
+  }
   const [version, setVersion] = useState<string>("");
   const [health, setHealth] = useState<Health | null>(null);
   const [quitting, setQuitting] = useState(false);
@@ -129,7 +142,7 @@ export default function App() {
             role="tab"
             aria-selected={tab === t.key}
             className={`tab ${tab === t.key ? "active" : ""}`}
-            onClick={() => setTab(t.key)}
+            onClick={() => openTab(t.key)}
           >
             {t.label}
           </button>
@@ -137,14 +150,21 @@ export default function App() {
       </nav>
 
       <main className="panel">
-        {/* Each tab is mounted only when active; switching is plain React
-            state, so there is no Gradio/Svelte reactive loop to freeze. */}
-        {tab === "text" && <TextTab />}
-        {tab === "files" && <FilesTab />}
-        {tab === "markdown" && <MarkdownTab />}
-        {tab === "dictionary" && <DictionaryTab />}
-        {tab === "evaluation" && <EvaluationTab />}
-        {tab === "info" && <InfoTab />}
+        {/* Mounted on first open, hidden rather than unmounted afterwards, so
+            work in progress survives a tab switch. Lazily, so opening the app
+            does not fire every tab's start-up requests at once. */}
+        {TABS.map((t) =>
+          opened.has(t.key) ? (
+            <div key={t.key} role="tabpanel" hidden={tab !== t.key}>
+              {t.key === "text" && <TextTab />}
+              {t.key === "files" && <FilesTab />}
+              {t.key === "markdown" && <MarkdownTab />}
+              {t.key === "dictionary" && <DictionaryTab />}
+              {t.key === "evaluation" && <EvaluationTab />}
+              {t.key === "info" && <InfoTab />}
+            </div>
+          ) : null,
+        )}
       </main>
     </div>
   );

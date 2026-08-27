@@ -100,6 +100,13 @@ body {
   border-bottom-color: var(--primary);
 }
 
+/* The tab panels are hidden with the `hidden` attribute rather than being
+   unmounted. Stated explicitly because any later `display` rule on the wrapper
+   would silently beat the user-agent default and show every tab at once. */
+[hidden] {
+  display: none !important;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--border);
