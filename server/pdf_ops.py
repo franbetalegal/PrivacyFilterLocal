@@ -64,8 +64,8 @@ def _ocr_line_breaks_enabled() -> bool:
       line breaks, in every operating point. Joined by spaces that line sits in
       a header soup ("... Expediente 4242/2016 <field label> MENOR: <name> <next
       heading> ...") and spaCy proposes nothing at all for the region;
-    * the addressee's name came out whole ("a two-word given name plus surname") instead of as
-      two wrong fragments, and the address came out whole too;
+    * the addressee's name came out whole instead of as two wrong fragments,
+      and the address came out whole too;
     * the case numbers were LOST, because the transformer had been reading them
       out of the surrounding line. That is repaired at the source instead:
       ``ES_CASE_NUMBER`` in :mod:`server.recognizers_es` now matches them

@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in a header soup ("... Expediente 4242/2016 <field label> MENOR: <name> <next
   heading> ...") and spaCy proposes nothing at all for the region; given the
   page's own line breaks, the line is analysed on its own and the name comes
-  out. The addressee's name came out whole too ("a two-word given name plus surname") instead
-  of as two wrong fragments, and so did the address.
+  out. The addressee's name came out whole too, instead of as two wrong
+  fragments, and so did the address.
 
   Line breaks only. Block and paragraph boundaries deliberately do NOT become
   blank lines, which is what 2.6.1 did and what made it worse: Tesseract splits
