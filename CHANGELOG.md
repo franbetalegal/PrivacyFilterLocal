@@ -12,10 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on a real 4-page scanned court order: the person named on the
   "MENOR: <name>" line was never redacted there, though the same person was
   redacted elsewhere in the document. Joined into one long line, that name sits
-  in a header soup ("... Expediente 282/2010 Sección G MENOR: <name> AUTO En
-  Barcelona, a ...") and spaCy proposes nothing at all for the region; given the
+  in a header soup ("... Expediente 4242/2016 <field label> MENOR: <name> <next
+  heading> ...") and spaCy proposes nothing at all for the region; given the
   page's own line breaks, the line is analysed on its own and the name comes
-  out. The addressee's name came out whole too ("RUBEN FERRER MARTIN") instead
+  out. The addressee's name came out whole too ("a two-word given name plus surname") instead
   of as two wrong fragments, and so did the address.
 
   Line breaks only. Block and paragraph boundaries deliberately do NOT become
@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arrived as separate lines. A number that identifies a proceeding — and through
   it the person it concerns — should not be at the mercy of layout, so
   `ES_CASE_NUMBER` now matches it deterministically: "N° Expediente Fiscalía:
-  1548/2010", "Procedimiento Expediente 282/2010", "Diligencias Previas
+  3141/2015", "Procedimiento Expediente 4242/2016", "Diligencias Previas
   1234/2019".
 
   Only the number is matched, never the announcing word, so the redacted
@@ -454,28 +454,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local model inference only
 - Apache 2.0 license
 - Dependencies from trusted sources only
-
----
-
-## How to Update
-
-### Automatic Update (Recommended)
-1. When a new version is available, a banner will appear at the top of the web interface
-2. Click "Update now" to download and install the update
-3. The app will restart automatically
-
-### Manual Update
-```bash
-cd C:\privacy-filter
-git pull
-.venv\Scripts\pip.exe install -e .\privacy-filter
-```
-
-### Creating a New Release
-```bash
-# Set your GitHub token
-$env:GITHUB_TOKEN = "your-token-here"
-
-# Create release (reads VERSION and CHANGELOG.md automatically)
-python create_release.py
-```

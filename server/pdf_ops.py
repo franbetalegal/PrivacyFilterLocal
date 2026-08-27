@@ -62,9 +62,9 @@ def _ocr_line_breaks_enabled() -> bool:
 
     * the person named on the "MENOR: <name>" header line was found only with
       line breaks, in every operating point. Joined by spaces that line sits in
-      a header soup ("... Expediente 282/2010 Sección G MENOR: <name> AUTO En
-      Barcelona, a ...") and spaCy proposes nothing at all for the region;
-    * the addressee's name came out whole ("RUBEN FERRER MARTIN") instead of as
+      a header soup ("... Expediente 4242/2016 <field label> MENOR: <name> <next
+      heading> ...") and spaCy proposes nothing at all for the region;
+    * the addressee's name came out whole ("a two-word given name plus surname") instead of as
       two wrong fragments, and the address came out whole too;
     * the case numbers were LOST, because the transformer had been reading them
       out of the surrounding line. That is repaired at the source instead:

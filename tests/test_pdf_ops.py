@@ -475,14 +475,14 @@ def test_ocr_page_can_join_the_whole_page_as_one_line(monkeypatch, tmp_path: Pat
     :func:`server.pdf_ops._ocr_line_breaks_enabled` for what was measured.
     """
     data = _fake_ocr_data([
-        ("Procedimiento", 1, 1, 1), ("282/2010", 1, 1, 1),
-        ("MENOR:", 1, 1, 2), ("JOSEPH", 1, 1, 2), ("PANTA", 1, 1, 2),
+        ("Procedimiento", 1, 1, 1), ("4242/2016", 1, 1, 1),
+        ("MENOR:", 1, 1, 2), ("MARCOS", 1, 1, 2), ("BELTRAN", 1, 1, 2),
         ("Vistas", 2, 1, 1), ("las", 2, 1, 1), ("diligencias", 2, 1, 1),
     ])
     text, coords = _ocr_a_blank_page(monkeypatch, tmp_path, data, line_breaks=False)
 
     assert text == (
-        "Procedimiento 282/2010 MENOR: JOSEPH PANTA Vistas las diligencias\n"
+        "Procedimiento 4242/2016 MENOR: MARCOS BELTRAN Vistas las diligencias\n"
     )
     assert len(text) == len(coords)
 
@@ -497,15 +497,15 @@ def test_ocr_page_separates_lines_by_default(monkeypatch, tmp_path: Path):
     and a blank line would cut the surrounding context both models rely on.
     """
     data = _fake_ocr_data([
-        ("Procedimiento", 1, 1, 1), ("282/2010", 1, 1, 1),
-        ("MENOR:", 1, 1, 2), ("JOSEPH", 1, 1, 2), ("PANTA", 1, 1, 2),
+        ("Procedimiento", 1, 1, 1), ("4242/2016", 1, 1, 1),
+        ("MENOR:", 1, 1, 2), ("MARCOS", 1, 1, 2), ("BELTRAN", 1, 1, 2),
         ("Vistas", 2, 1, 1), ("las", 2, 1, 1), ("diligencias", 2, 1, 1),
     ])
     text, coords = _ocr_a_blank_page(monkeypatch, tmp_path, data)
 
     assert text == (
-        "Procedimiento 282/2010\n"
-        "MENOR: JOSEPH PANTA\n"
+        "Procedimiento 4242/2016\n"
+        "MENOR: MARCOS BELTRAN\n"
         "Vistas las diligencias\n"
     )
     assert "\n\n" not in text
@@ -538,8 +538,8 @@ def test_real_ocr_of_a_scanned_page_keeps_one_line_per_line(tmp_path: Path, monk
     pytest.importorskip("pytesseract")
     pytest.importorskip("PIL.Image")
     lines = [
-        "Procedimiento Expediente 282/2010",
-        "MENOR: JOSEPH KEVIN PANTA MINAYA",
+        "Procedimiento Expediente 4242/2016",
+        "MENOR: MARCOS BELTRAN QUEROL",
     ]
     source = _write_pdf(tmp_path, lines, filename="text-layer.pdf")
     doc = fitz.open(str(source))
@@ -556,9 +556,9 @@ def test_real_ocr_of_a_scanned_page_keeps_one_line_per_line(tmp_path: Path, monk
     assert result is not None
     text, coords = result
     assert len(text) == len(coords)
-    assert "MENOR: JOSEPH KEVIN PANTA MINAYA" in text
+    assert "MENOR: MARCOS BELTRAN QUEROL" in text
     # The two source lines must not have been fused into one.
-    assert "282/2010\nMENOR:" in text
+    assert "4242/2016\nMENOR:" in text
 
 
 # --- Parallel extraction failure -------------------------------------------

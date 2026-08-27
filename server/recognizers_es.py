@@ -149,7 +149,7 @@ class _Recognizer:
     # Words that veto a match when they appear near it, checked in the same
     # window as ``context``. Needed where the shape a trigger word licenses is
     # also the shape of something that is not PII: a case number
-    # ("Expediente 282/2010") and a statute citation ("Ley Orgánica 5/2000")
+    # ("Expediente 4242/2016") and a statute citation ("Ley Orgánica 5/2000")
     # are written identically, and both live near the word "procedimiento".
     exclude_context: tuple[str, ...] = ()
 
@@ -315,8 +315,8 @@ _RECOGNIZERS: tuple[_Recognizer, ...] = (
     ),
     _Recognizer(
         entity_type="ES_CASE_NUMBER",
-        # Court and prosecution case numbers: "Expediente 282/2010",
-        # "N° Expediente Fiscalía: 1548/2010", "Diligencias Previas 1234/2019".
+        # Court and prosecution case numbers: "Expediente 4242/2016",
+        # "N° Expediente Fiscalía: 3141/2015", "Diligencias Previas 1234/2019".
         # They identify the proceeding, and through it the person it is about,
         # which is why the tool was already redacting them — but only when the
         # transformer happened to read enough of the surrounding line. Measured

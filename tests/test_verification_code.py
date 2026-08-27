@@ -110,7 +110,7 @@ def test_only_the_shapeless_recognizers_require_context():
     # every other recognizer either validates a check digit or carries a shape
     # specific enough to stand alone. The two that need it are the two whose
     # shape says nothing on its own — a long alphanumeric run is a verification
-    # code or a cadastral reference, and "282/2010" is a case number or a
+    # code or a cadastral reference, and "4242/2016" is a case number or a
     # statute or a date.
     requiring = {
         r.entity_type for r in recognizers_es._RECOGNIZERS if r.require_context
