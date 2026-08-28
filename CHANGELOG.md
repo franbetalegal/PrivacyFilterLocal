@@ -5,6 +5,66 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-08-28
+
+### Fixed
+- **Person names written in caps were never redacted, in every release so far.**
+  A real tax notice came back with the taxpayer's and the administrator's names
+  in the clear while the DNI, the address, the phone, the CSV and the account
+  number were all replaced — an output that reads as anonymised and is not.
+
+  The three-layer detector was running on two layers. The spaCy models are what
+  find a person in Spanish and Catalan, and they were only ever mentioned in a
+  comment in `requirements-server.txt`: no launcher, no Windows build, no CI job
+  and no in-app update ever installed them. What was left is the opf model,
+  documented as primarily English, which finds a name in mixed case and misses
+  it in caps — the form every tax and court document uses. Measured on the
+  document that surfaced this, same operating point: 18 `NOMBRE` spans with the
+  models, 5 without, and the five are the mixed-case ones.
+
+  This also means the name-detection work released in 2.6.2 never reached
+  anyone.
+
+  **If you anonymised documents with 2.6.3 or earlier, run them through again.**
+
+- **The app now downloads those models itself and refuses to run without them.**
+  They are ~1.2 GB, so they are fetched at first run into the app folder like
+  the PII model rather than bundled — no installer grows. The new
+  `server/ner_models.py` resolves the version through spaCy's own compatibility
+  table, downloads the published wheel, and only replaces the installed copy
+  after unpacking it and opening it successfully, so a failed download costs
+  nothing. On every start it checks for a newer compatible version and installs
+  it in the background. Identical on Windows, macOS and Linux, and the Windows
+  uninstaller knows about the new folder.
+
+- **The app can no longer look healthy while a detection layer is missing.**
+  `/api/health` reports every component (PII model, each NER model, Tesseract)
+  and decides `ready` itself; the preparing screen holds until all of them are
+  in place; the **Información** tab lists their state and versions; and the
+  diagnostics bundle carries the same picture. A missing Tesseract now says so
+  in the app instead of only in the log — without it a scanned PDF extracts as
+  nothing and "no detections" looks exactly like a clean document.
+
+- **An update from a git checkout never reinstalled the dependencies.** That
+  branch reinstalled only the `opf` package, so a checkout updated from inside
+  the app kept the previous version's pinned packages indefinitely: new code
+  against old dependencies, with nothing saying so. It now reinstalls the
+  requirements like the archive branch does, without undoing its own editable
+  install.
+
+- **A failed dependency reinstall no longer reports a successful update.** It
+  returned success with the pip error appended to the message, which is how an
+  install ends up in a state that is neither version.
+
+### Added
+- `smoke_ner.py`, run by the release workflow on Windows, macOS and Linux
+  against the environment about to ship: it performs the first-run download and
+  asserts that an all-caps person name is detected. The unit tests skip when the
+  models are absent, which is exactly the broken state, so this is the check
+  that fails instead.
+- Tests for the model install path (staging, validation, atomic replace,
+  rollback) and for the health/preflight wiring.
+
 ## [2.6.3] - 2026-08-28
 
 ### Fixed

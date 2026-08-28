@@ -38,6 +38,10 @@ def api_diagnostics() -> Response:
         "model": inference.status(),
         "checkpoint_dir": str(cp),
         "checkpoint_present": inference._checkpoint_is_valid(cp),
+        # Every detection component, not just opf. A support bundle that says
+        # the checkpoint is fine while the NER models are absent describes an
+        # app that cannot find a name written in caps and looks healthy.
+        "components": inference.components(),
         "env_set": {
             k: bool(os.environ.get(k))
             for k in (

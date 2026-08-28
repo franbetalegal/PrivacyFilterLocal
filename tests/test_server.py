@@ -37,6 +37,51 @@ def test_health():
     assert "model_loaded" in r.json()
 
 
+def test_health_reports_every_detection_component():
+    """The check that would have caught the three releases shipped without NER.
+
+    An install missing the spaCy models detects no name written in caps, and
+    from the outside that looks exactly like a document with no names in it.
+    Health has to be able to say so.
+    """
+    components = client.get("/api/health").json()["components"]
+
+    assert set(components) == {"opf", "ner", "ocr"}
+    assert isinstance(components["ner"]["available"], bool)
+    assert components["ner"]["models"], "no NER model is configured at all"
+    for model in components["ner"]["models"]:
+        assert model["name"]
+        assert "present" in model
+
+
+def test_health_is_not_ready_while_the_ner_layer_is_missing(monkeypatch):
+    """``ready`` gates the whole UI, so it must not ignore the NER layer."""
+    from server import inference
+
+    real = inference.ner_status()
+    monkeypatch.setattr(
+        inference, "ner_status", lambda: {**real, "available": False}
+    )
+
+    assert client.get("/api/health").json()["ready"] is False
+
+
+def test_startup_preflight_covers_every_component(monkeypatch):
+    """The preflight is the only thing between a user and a half-configured
+    detector, so it has to run all three stages, in order."""
+    from server import inference
+
+    ran: list[str] = []
+    for stage in ("ensure_model_ready", "ensure_ner_models_ready", "refresh_ner_models"):
+        monkeypatch.setattr(
+            inference, stage, lambda s=stage: ran.append(s)
+        )
+
+    inference.run_preflight()
+
+    assert ran == ["ensure_model_ready", "ensure_ner_models_ready", "refresh_ner_models"]
+
+
 def test_health_carries_a_stable_instance_id():
     """The client tells a restart from a live server by this id changing.
 

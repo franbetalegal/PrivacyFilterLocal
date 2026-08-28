@@ -29,9 +29,14 @@ export HUGGINGFACE_HUB_CACHE="$DIR/cache/huggingface/hub"
 export TIKTOKEN_CACHE_DIR="$DIR/cache/tiktoken"
 export TMPDIR="$DIR/tmp"
 export PF_LOG_DIR="$DIR/logs"
+# spaCy NER models (person names). Downloaded on first run like the PII model,
+# not shipped in the archive: ~1.2 GB that would otherwise sit in every
+# download. Without them, names written in caps are not detected at all.
+export PF_NER_DIR="$DIR/ner-models"
 export PF_HOST="127.0.0.1"
 export PF_PORT="$PORT"
-mkdir -p "$OPF_CHECKPOINT" "$HF_HOME" "$TIKTOKEN_CACHE_DIR" "$TMPDIR" "$PF_LOG_DIR"
+mkdir -p "$OPF_CHECKPOINT" "$HF_HOME" "$TIKTOKEN_CACHE_DIR" "$TMPDIR" "$PF_LOG_DIR" \
+         "$PF_NER_DIR"
 
 # Return 0 if something is already listening on the local port.
 port_in_use() {
@@ -63,6 +68,23 @@ if port_in_use; then
   echo "Privacy Filter is already running on port $PORT. Opening your browser..."
   open_url
   exit 0
+fi
+
+# Tesseract is required for OCR of scanned PDFs. Warn (don't fail): the app
+# still works on text-layer documents without it. Same warning run.command
+# already gives on macOS; without it a scanned page extracts as empty text and
+# "no detections" reads exactly like a clean document.
+if ! command -v tesseract >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+
+Warning: tesseract not found. OCR of scanned PDFs will not work.
+To install it:
+  sudo apt install tesseract-ocr tesseract-ocr-spa tesseract-ocr-cat
+
+You can do this later; the app opens either way for documents that have a
+text layer. The Info tab shows the current state.
+
+EOF
 fi
 
 # First-run setup: build the virtualenv and install dependencies.

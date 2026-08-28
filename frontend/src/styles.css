@@ -581,3 +581,18 @@ code {
   font-style: italic;
   color: var(--primary);
 }
+
+/* Aviso persistente de una capa de detección ausente (p. ej. OCR). Se
+   distingue del banner de actualización por el borde: no es una novedad, es
+   algo que está degradando el resultado ahora mismo. */
+.banner.warning-banner {
+  border-color: var(--error);
+}
+
+.banner.warning-banner p {
+  margin: 6px 0 0;
+}
+
+.banner.warning-banner code {
+  font-size: 0.8rem;
+}

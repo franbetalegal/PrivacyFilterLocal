@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getVersion, getHealth, shutdown, DIAGNOSTICS_URL, type Health } from "./api";
+import { getVersion, getHealth, isReady, shutdown, DIAGNOSTICS_URL, type Health } from "./api";
 import TextTab from "./tabs/TextTab";
 import FilesTab from "./tabs/FilesTab";
 import DictionaryTab from "./tabs/DictionaryTab";
@@ -8,6 +8,7 @@ import EvaluationTab from "./tabs/EvaluationTab";
 import InfoTab from "./tabs/InfoTab";
 import UpdateBanner from "./components/UpdateBanner";
 import PreparingScreen from "./components/PreparingScreen";
+import ComponentWarnings from "./components/ComponentWarnings";
 
 type TabKey =
   | "text"
@@ -61,7 +62,10 @@ export default function App() {
         const h = await getHealth();
         if (!active) return;
         setHealth(h);
-        if (h.downloading || h.error) {
+        // Keep polling while the server says it is not ready: the preflight
+        // downloads the model and the NER models one after the other, and the
+        // NER stage is not visible in the old `downloading` flag.
+        if (!isReady(h)) {
           timer = window.setTimeout(poll, 1500);
         }
       } catch {
@@ -97,8 +101,7 @@ export default function App() {
     );
   }
 
-  const ready = health !== null && !health.downloading && !health.error;
-  if (!ready) {
+  if (!isReady(health)) {
     return (
       <div className="app">
         <PreparingScreen health={health} />
@@ -109,6 +112,7 @@ export default function App() {
   return (
     <div className="app">
       <UpdateBanner />
+      <ComponentWarnings health={health} />
 
       <header className="header">
         <div className="header-row">

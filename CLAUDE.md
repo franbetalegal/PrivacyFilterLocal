@@ -6,13 +6,16 @@ Herramienta local de detección/redacción de PII en documentos (texto, PDF, DOC
 
 - **Run backend:** `source .venv/bin/activate && python -m server.main` (uvicorn, puerto 7860 por defecto; `PF_HOST`/`PF_PORT` lo override)
 - **Run frontend (dev):** `corepack pnpm -C frontend dev` (proxya `/api` a :7860)
-- **Tests backend:** `source .venv/bin/activate && python -m pytest` (424 tests)
+- **Tests backend:** `source .venv/bin/activate && python -m pytest` (637 tests)
 - **Tests/lint frontend:** `corepack pnpm -C frontend run test` / `lint` / `typecheck` (bootstrap con vitest + Testing Library + ESLint flat config, antes no existían)
 - **Stack:** FastAPI (`server/`) + React/Vite/TS (`frontend/`). Modelo `opf` (PyTorch) + reconocedores ES deterministas (DNI/IBAN/etc. con checksum) + NER spaCy ES/CA, con pseudonimización y verificación anti-fuga post-redacción.
 - **Arquitectura:** desde ago-2026 `server/main.py` es solo el ensamblador (app/middleware/lifespan/CLI, ~160 líneas); las rutas viven en `server/routes/{core,markdown,dictionary,dataset,updates,diagnostics}.py`, el registro de tokens de descarga en `server/downloads.py`, y el logging a fichero en `server/logging_setup.py`.
 - **CI:** `.github/workflows/tests.yml` corre pytest + frontend lint/typecheck/test/build en cada push/PR a `main` (antes solo había CI en tags de release, vía `release.yml`).
 - **Gotcha de CI:** `server/moe_fast.py` calibra con un benchmark real de CPU cacheado por host bajo el directorio del checkpoint del modelo; en runners efímeros de GitHub Actions nunca hay cache hit, así que el benchmark se re-ejecuta cada vez y puede colgar el job. Mitigado con `PF_FAST_MOE=0` en el job de CI más un `skipif(CI=="true")` en `tests/test_moe_fast.py::test_calibration_picks_the_faster_strategy_and_caches_it` (ese test llama al benchmark directamente, sin pasar por la env var).
 - `requirements-server.txt` tiene versiones pinneadas exactas (antes no tenía ninguna) para builds reproducibles del portable.
+- **Modelos NER (desde 2.7.0):** los modelos spaCy NO son dependencia pip ni van en ningún paquete. `server/ner_models.py` los descarga en `PF_NER_DIR` (por defecto `<carpeta de la app>/ner-models`, ~1,2 GB) en el primer arranque y comprueba versión en cada inicio contra la tabla de compatibilidad que publica spaCy. Un modelo instalado con `python -m spacy download` cuenta como presente y se usa tal cual, así que el flujo de desarrollo no cambia.
+- **Dónde se verifica que el entorno está completo:** `server/inference.run_preflight()` (arranque, vía el lifespan de `server/main.py`) instala lo que falte; `inference.components()` alimenta `/api/health` y el bundle de diagnóstico, y `status()["ready"]` es la única definición de "la app puede anonimizar ahora" — el frontend la consume vía `isReady()`. Añadir una capa de detección implica añadirla a `components()`, o volverá a poder faltar en silencio.
+- **Guarda de release:** `smoke_ner.py` corre en el job `smoke` de `release.yml` en Windows, macOS y Linux; hace la descarga de primer arranque y falla si un nombre en mayúsculas no se detecta. Los tests de spaCy en `tests/test_ner_es.py` se saltan sin modelos, que es justo el estado roto, así que la cobertura real vive ahí.
 
 ## Convención de idiomas
 

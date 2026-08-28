@@ -134,7 +134,9 @@ def restart_server() -> None:
         _spawn_detached_and_exit(python)
 
 
-def _reinstall_dependencies(message: str) -> tuple[bool, str]:
+def _reinstall_dependencies(
+    message: str, *, include_package: bool = True
+) -> tuple[bool, str]:
     """Reinstall the bundled ``opf`` package and pinned server requirements.
 
     An archive install replaces the files under ``privacy-filter/`` and the
@@ -142,15 +144,20 @@ def _reinstall_dependencies(message: str) -> tuple[bool, str]:
     previous version installed. Without this the update ships new sources and
     keeps running the old wheel.
 
-    Best effort: a failure here leaves an installed, working previous
-    environment with new sources on disk, which the restart will surface
-    normally, so it is reported as a warning rather than failing the update.
+    A failure here is an error, not a note. It leaves new sources on disk
+    running against the previous version's packages, which is the shape of
+    problem that hides for months: the app reports "updated successfully" and
+    then behaves like neither version. The user needs to know the update did
+    not complete so they can reinstall.
     """
     venv_py = _venv_python()
     package = PROJECT_DIR / "privacy-filter"
     requirements = PROJECT_DIR / "requirements-server.txt"
     steps: list[list[str]] = []
-    if package.is_dir():
+    # ``include_package=False`` is for the git-checkout branch, which already
+    # reinstalled ``privacy-filter`` in editable mode: installing it again as a
+    # regular package would silently undo that.
+    if include_package and package.is_dir():
         steps.append([venv_py, "-m", "pip", "install", str(package)])
     if requirements.is_file():
         steps.append([venv_py, "-m", "pip", "install", "-r", str(requirements)])
@@ -161,12 +168,12 @@ def _reinstall_dependencies(message: str) -> tuple[bool, str]:
                 timeout=900,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Dependency reinstall failed: %s", exc)
-            return True, f"{message} (warning: dependency reinstall failed: {exc})"
+            logger.error("Dependency reinstall failed: %s", exc)
+            return False, f"{message}, but the dependency reinstall failed: {exc}"
         if result.returncode != 0:
             tail = (result.stderr or "")[-500:]
-            logger.warning("Dependency reinstall failed: %s", tail)
-            return True, f"{message} (warning: dependency reinstall failed: {tail})"
+            logger.error("Dependency reinstall failed: %s", tail)
+            return False, f"{message}, but the dependency reinstall failed: {tail}"
     return True, message
 
 
@@ -220,6 +227,15 @@ def install_app_update() -> dict:
                     timeout=120,
                 )
             success, message = True, f"Updated to v{info.latest_version}"
+            # A pull can change the pins too. This branch used to stop at the
+            # editable opf install, so a checkout that updated from inside the
+            # app kept the previous version's dependencies indefinitely — new
+            # code against old packages, with nothing saying so.
+            requirements = PROJECT_DIR / "requirements-server.txt"
+            if venv_py != sys.executable and requirements.is_file():
+                success, message = _reinstall_dependencies(
+                    message, include_package=False
+                )
         except Exception as exc:  # noqa: BLE001
             return {"status": "error", "message": f"Update failed: {exc}"}
 

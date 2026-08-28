@@ -38,10 +38,14 @@ export TIKTOKEN_CACHE_DIR="$DIR/cache/tiktoken"
 export TMPDIR="$DIR/tmp"
 export PF_LOG_DIR="$DIR/logs"
 export PF_DATA_DIR="$DIR/data"
+# spaCy NER models (person names). Downloaded on first run like the PII model,
+# not shipped in the archive: ~1.2 GB that would otherwise sit in every
+# download. Without them, names written in caps are not detected at all.
+export PF_NER_DIR="$DIR/ner-models"
 export PF_HOST="127.0.0.1"
 export PF_PORT="$PORT"
 mkdir -p "$OPF_CHECKPOINT" "$HF_HOME" "$TIKTOKEN_CACHE_DIR" "$TMPDIR" \
-         "$PF_LOG_DIR" "$PF_DATA_DIR"
+         "$PF_LOG_DIR" "$PF_DATA_DIR" "$PF_NER_DIR"
 
 # Return 0 if something is already listening on the local port.
 port_in_use() {
