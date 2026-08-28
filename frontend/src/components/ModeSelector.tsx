@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { MODES, MODE_LABEL, type Mode } from "../api";
 
 /** Radio group for the precision ↔ recall operating point. Kept as a shared
@@ -11,14 +12,25 @@ export default function ModeSelector({
   onChange: (m: Mode) => void;
   disabled?: boolean;
 }) {
+  // A visited tab stays mounted, so two selectors can share the document. With
+  // a hardcoded name their radios would form a single group: the browser keeps
+  // one checked across both, fighting React's controlled `checked` and leaving
+  // clicks looking like they did nothing. One group per instance fixes it, and
+  // the id/htmlFor pair makes the label association explicit on top of nesting.
+  const uid = useId();
   return (
     <fieldset className="mode-selector" disabled={disabled}>
       <legend>Modo de detección</legend>
       {MODES.map((m) => (
-        <label key={m} className={`chip ${value === m ? "selected" : ""}`}>
+        <label
+          key={m}
+          className={`chip ${value === m ? "selected" : ""}`}
+          htmlFor={`${uid}-${m}`}
+        >
           <input
+            id={`${uid}-${m}`}
             type="radio"
-            name="mode"
+            name={`mode-${uid}`}
             value={m}
             checked={value === m}
             onChange={() => onChange(m)}

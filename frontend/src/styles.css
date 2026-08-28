@@ -393,20 +393,32 @@ code {
   font-size: 0.85rem;
 }
 
+/* The whole pill is the hit target: a label sized to its text alone leaves the
+   fieldset padding and the flex gap looking clickable while doing nothing. */
 .mode-selector .chip {
   display: inline-flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
+  min-height: 36px;
+  padding: 8px 14px;
   cursor: pointer;
   user-select: none;
 }
 
 .mode-selector .chip.selected {
-  outline: 2px solid var(--accent, #3aa757);
+  border-color: var(--primary);
+  background: rgba(79, 140, 255, 0.16);
+  color: var(--text);
+}
+
+.mode-selector .chip:focus-within {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .mode-selector input[type="radio"] {
   margin: 0;
+  cursor: pointer;
 }
 
 /* Warning banner (fase 4 anti-leak + fase 5 mode confirmation) */
