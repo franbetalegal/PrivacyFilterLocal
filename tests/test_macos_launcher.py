@@ -82,17 +82,38 @@ def test_launcher_opens_browser_with_macos_open():
 
 
 def test_launcher_warns_about_tesseract_but_does_not_exit():
-    """OCR is optional; missing tesseract must warn, never abort startup."""
+    """OCR is optional; a missing tesseract must warn, never abort startup."""
     body = LAUNCHER.read_text(encoding="utf-8")
-    assert "brew install tesseract" in body
     tess_block_start = body.index("if ! command -v tesseract")
-    tess_block = body[tess_block_start : tess_block_start + 400]
+    tess_block = body[tess_block_start : tess_block_start + 500]
     assert "exit 1" not in tess_block, (
         "the tesseract warning block must not exit; the app must still open"
     )
 
 
-def test_launcher_gives_a_python_install_hint():
-    """A cryptic 'python3 not found' is the biggest first-run failure mode."""
+def test_launcher_uses_the_bundled_tesseract():
+    """Shipped since 2.8.0, because 'install it yourself' left Windows and
+    macOS users with an app that silently could not read scanned documents."""
     body = LAUNCHER.read_text(encoding="utf-8")
-    assert "brew install python" in body
+    assert '$DIR/tesseract/bin' in body, "the bundled binary must go on PATH"
+    assert 'PF_TESSDATA_DIR="$DIR/tesseract/tessdata"' in body, (
+        "server/pdf_ops.py reads PF_TESSDATA_DIR to pass --tessdata-dir; "
+        "without it the bundled Tesseract finds no language data"
+    )
+
+
+def test_launcher_prefers_its_own_python():
+    """No system Python required: the archive carries a relocatable CPython."""
+    body = LAUNCHER.read_text(encoding="utf-8")
+    assert 'BUNDLED_PY="$DIR/python/bin/python3"' in body
+    # PYTHON= must still win, so a developer can point at their own.
+    assert 'if [ -n "${PYTHON:-}" ]' in body
+
+
+def test_launcher_clears_its_own_quarantine():
+    """Extracted from a downloaded archive, every bundled binary is quarantined
+    and macOS kills the unsigned ones on exec — with no message the user can
+    act on."""
+    body = LAUNCHER.read_text(encoding="utf-8")
+    assert 'xattr -dr com.apple.quarantine "$DIR"' in body
+    assert "PF_SKIP_QUARANTINE_CLEAR" in body, "there must be a way to opt out"

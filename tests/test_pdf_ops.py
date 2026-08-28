@@ -433,8 +433,10 @@ class _FakeTesseract:
 
     def __init__(self, data: dict):
         self._data = data
+        self.last_call: dict = {}
 
-    def image_to_data(self, image, lang=None, output_type=None):
+    def image_to_data(self, image, lang=None, config="", output_type=None):
+        self.last_call = {"lang": lang, "config": config}
         return self._data
 
 
@@ -456,16 +458,56 @@ def _fake_ocr_data(words: list[tuple[str, int, int, int]]) -> dict:
     return data
 
 
-def _ocr_a_blank_page(monkeypatch, tmp_path: Path, data: dict, *, line_breaks: bool = True):
+def _ocr_a_blank_page(monkeypatch, tmp_path: Path, data: dict, *, line_breaks: bool = True,
+                      fake: "_FakeTesseract | None" = None):
     """Run ``_ocr_page`` over a blank page with ``pytesseract`` stubbed out."""
     monkeypatch.setenv("PF_OCR_LINE_BREAKS", "1" if line_breaks else "0")
-    monkeypatch.setitem(sys.modules, "pytesseract", _FakeTesseract(data))
+    monkeypatch.setitem(sys.modules, "pytesseract", fake or _FakeTesseract(data))
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
     try:
         return pdf_ops._ocr_page(page, 0, fitz)
     finally:
         doc.close()
+
+
+# --- bundled language data -------------------------------------------------
+#
+# The builds ship Tesseract inside the app folder and point PF_TESSDATA_DIR at
+# its tessdata. Passing --tessdata-dir explicitly is the whole reason these
+# exist: TESSDATA_PREFIX meant different things in Tesseract 3 and 4, and
+# getting it wrong fails at OCR time on a user's machine, not here.
+
+
+def test_bundled_language_data_is_passed_to_tesseract(monkeypatch, tmp_path: Path):
+    tessdata = tmp_path / "tessdata"
+    tessdata.mkdir()
+    monkeypatch.setenv("PF_TESSDATA_DIR", str(tessdata))
+    fake = _FakeTesseract(_fake_ocr_data([("Hola", 1, 1, 1)]))
+
+    _ocr_a_blank_page(monkeypatch, tmp_path, {}, fake=fake)
+
+    assert f'--tessdata-dir "{tessdata}"' == fake.last_call["config"]
+
+
+def test_no_language_data_override_leaves_tesseract_to_itself(monkeypatch, tmp_path: Path):
+    """A system install resolves its own data; we must not send an empty flag."""
+    monkeypatch.delenv("PF_TESSDATA_DIR", raising=False)
+    fake = _FakeTesseract(_fake_ocr_data([("Hola", 1, 1, 1)]))
+
+    _ocr_a_blank_page(monkeypatch, tmp_path, {}, fake=fake)
+
+    assert fake.last_call["config"] == ""
+
+
+def test_a_bad_language_data_path_is_ignored_rather_than_fatal(monkeypatch, tmp_path: Path):
+    """Better a working OCR with the system data than none at all."""
+    monkeypatch.setenv("PF_TESSDATA_DIR", str(tmp_path / "does-not-exist"))
+    fake = _FakeTesseract(_fake_ocr_data([("Hola", 1, 1, 1)]))
+
+    _ocr_a_blank_page(monkeypatch, tmp_path, {}, fake=fake)
+
+    assert fake.last_call["config"] == ""
 
 
 def test_ocr_page_can_join_the_whole_page_as_one_line(monkeypatch, tmp_path: Path):

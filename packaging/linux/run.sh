@@ -16,7 +16,17 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-PY="${PYTHON:-python3}"
+# The archive ships its own relocatable CPython, so no system Python and no
+# python3-venv package is needed. PYTHON= still overrides it, and a build
+# without the bundled runtime falls back to the system python3.
+BUNDLED_PY="$DIR/python/bin/python3"
+if [ -n "${PYTHON:-}" ]; then
+  PY="$PYTHON"
+elif [ -x "$BUNDLED_PY" ]; then
+  PY="$BUNDLED_PY"
+else
+  PY="python3"
+fi
 VENV="$DIR/.venv"
 VENV_PY="$VENV/bin/python"
 DEPS_OK="$VENV/.deps-ok"
@@ -33,6 +43,15 @@ export PF_LOG_DIR="$DIR/logs"
 # not shipped in the archive: ~1.2 GB that would otherwise sit in every
 # download. Without them, names written in caps are not detected at all.
 export PF_NER_DIR="$DIR/ner-models"
+# Bundled Tesseract: on PATH so both pytesseract and the app's own component
+# check find it, with its language data pointed at explicitly. Its libraries
+# travel next to it, hence the LD_LIBRARY_PATH. A copy already installed on the
+# machine still wins if the user puts it earlier on PATH.
+if [ -x "$DIR/tesseract/bin/tesseract" ]; then
+  export PATH="$DIR/tesseract/bin:$PATH"
+  export LD_LIBRARY_PATH="$DIR/tesseract/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export PF_TESSDATA_DIR="$DIR/tesseract/tessdata"
+fi
 export PF_HOST="127.0.0.1"
 export PF_PORT="$PORT"
 mkdir -p "$OPF_CHECKPOINT" "$HF_HOME" "$TIKTOKEN_CACHE_DIR" "$TMPDIR" "$PF_LOG_DIR" \
@@ -70,27 +89,30 @@ if port_in_use; then
   exit 0
 fi
 
-# Tesseract is required for OCR of scanned PDFs. Warn (don't fail): the app
-# still works on text-layer documents without it. Same warning run.command
-# already gives on macOS; without it a scanned page extracts as empty text and
-# "no detections" reads exactly like a clean document.
+# OCR of scanned PDFs. The archive ships Tesseract, so this only fires on a
+# build assembled without it, or on a distribution where the bundled binary
+# will not load. Warn, don't fail: text-layer documents still work, and the app
+# reports the same state in its interface.
 if ! command -v tesseract >/dev/null 2>&1; then
   cat >&2 <<'EOF'
 
-Warning: tesseract not found. OCR of scanned PDFs will not work.
-To install it:
+Warning: tesseract not found and this package does not carry one. OCR of
+scanned PDFs will not work: a PDF with no text layer reads as empty. Install it
+with:
   sudo apt install tesseract-ocr tesseract-ocr-spa tesseract-ocr-cat
 
-You can do this later; the app opens either way for documents that have a
-text layer. The Info tab shows the current state.
+The app opens either way for documents that have a text layer, and the Info tab
+shows the current state.
 
 EOF
 fi
 
 # First-run setup: build the virtualenv and install dependencies.
 if [ ! -f "$DEPS_OK" ]; then
-  if ! command -v "$PY" >/dev/null 2>&1; then
-    echo "ERROR: '$PY' not found. Install Python 3.10+ (e.g. 'sudo apt install python3 python3-venv') and retry." >&2
+  if ! command -v "$PY" >/dev/null 2>&1 && [ ! -x "$PY" ]; then
+    echo "ERROR: '$PY' not found. This package should carry its own runtime at" >&2
+    echo "python/bin/python3; if you removed it or pointed PYTHON= elsewhere, fix" >&2
+    echo "that, otherwise download the package again." >&2
     exit 1
   fi
   echo "First run: setting up the environment (downloads PyTorch + deps, a few minutes)..."

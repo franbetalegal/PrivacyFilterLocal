@@ -23,7 +23,26 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-PY="${PYTHON:-python3}"
+# Everything extracted from a downloaded archive inherits com.apple.quarantine,
+# and macOS kills an unsigned quarantined binary on exec — which would take the
+# bundled Python and Tesseract down with it, with no message the user can act
+# on. Clearing it on our own folder is what the user would otherwise do by hand,
+# once, through the Gatekeeper dialog. Best effort: a failure here is not fatal.
+if [ -z "${PF_SKIP_QUARANTINE_CLEAR:-}" ]; then
+  xattr -dr com.apple.quarantine "$DIR" 2>/dev/null || true
+fi
+
+# The archive ships its own relocatable CPython, so nothing has to be
+# installed on the machine first. PYTHON= still overrides it, and a build
+# without the bundled runtime falls back to the system python3.
+BUNDLED_PY="$DIR/python/bin/python3"
+if [ -n "${PYTHON:-}" ]; then
+  PY="$PYTHON"
+elif [ -x "$BUNDLED_PY" ]; then
+  PY="$BUNDLED_PY"
+else
+  PY="python3"
+fi
 VENV="$DIR/.venv"
 VENV_PY="$VENV/bin/python"
 DEPS_OK="$VENV/.deps-ok"
@@ -42,6 +61,13 @@ export PF_DATA_DIR="$DIR/data"
 # not shipped in the archive: ~1.2 GB that would otherwise sit in every
 # download. Without them, names written in caps are not detected at all.
 export PF_NER_DIR="$DIR/ner-models"
+# Bundled Tesseract: on PATH so both pytesseract and the app's own component
+# check find it, with its language data pointed at explicitly. A copy already
+# installed on the machine still wins if the user puts it earlier on PATH.
+if [ -x "$DIR/tesseract/bin/tesseract" ]; then
+  export PATH="$DIR/tesseract/bin:$PATH"
+  export PF_TESSDATA_DIR="$DIR/tesseract/tessdata"
+fi
 export PF_HOST="127.0.0.1"
 export PF_PORT="$PORT"
 mkdir -p "$OPF_CHECKPOINT" "$HF_HOME" "$TIKTOKEN_CACHE_DIR" "$TMPDIR" \
@@ -78,33 +104,27 @@ if port_in_use; then
   exit 0
 fi
 
-# On macOS Python may not be preinstalled with a working version. Point users
-# to the right fix instead of failing with a cryptic 'not found'.
-if ! command -v "$PY" >/dev/null 2>&1; then
+# Only reachable when the bundled runtime is absent (a hand-assembled folder,
+# or PYTHON= pointing somewhere wrong). A release archive carries its own.
+if ! command -v "$PY" >/dev/null 2>&1 && [ ! -x "$PY" ]; then
   cat >&2 <<EOF
-ERROR: No se encuentra Python.
-Instálalo con Homebrew (recomendado):
-
-  /bin/bash -c "\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  brew install python@3.12
-
-Luego vuelve a hacer doble-clic sobre run.command.
+ERROR: No se encuentra Python ($PY).
+Este paquete debería traer el suyo en python/bin/python3. Si lo has borrado o
+has usado PYTHON= para apuntar a otro, corrige eso; si no, vuelve a descargar
+el paquete.
 EOF
   read -n 1 -s -r -p "Pulsa una tecla para cerrar…"
   exit 1
 fi
 
-# Tesseract is required for OCR of scanned PDFs. Warn (don't fail): the app
-# still works on text-layer documents without it.
+# OCR of scanned PDFs. The archive ships Tesseract, so this only fires on a
+# build assembled without it; the app reports the same thing in its interface.
 if ! command -v tesseract >/dev/null 2>&1; then
   cat >&2 <<'EOF'
 
-Aviso: no se encuentra Tesseract. El OCR de PDFs escaneados no funcionará.
-Para instalarlo:
-  brew install tesseract tesseract-lang
-
-Puedes hacerlo más tarde; la app se abrirá igualmente para documentos con
-capa de texto.
+Aviso: no se encuentra Tesseract y este paquete no lo trae. El OCR de PDFs
+escaneados no funcionará: un PDF sin capa de texto se leerá vacío. La app se
+abrirá igualmente para documentos con texto seleccionable.
 
 EOF
 fi

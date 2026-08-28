@@ -5,6 +5,54 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-08-28
+
+### Changed
+- **The packages no longer ask the user to install anything.** Installing 2.7.0
+  on a clean Windows machine worked, and then the app opened and said OCR was
+  unavailable because Tesseract was missing and had to be downloaded by hand.
+  Windows has no package manager by default, so that was a dead end for most
+  people, and it matters more than it sounds: without OCR a scanned PDF extracts
+  as empty text, the pipeline finds nothing, and "no detections" reads exactly
+  like a document with no personal data in it.
+
+  All three builds now carry Tesseract — the binary plus `spa`, `cat` and `eng`
+  from `tessdata_fast`, about 40 MB against the ~4 GB of models the app already
+  downloads. The launchers put it on `PATH` and pass its language data with
+  `--tessdata-dir`, which is version-proof in a way `TESSDATA_PREFIX` is not:
+  that variable meant "the directory containing tessdata" in Tesseract 3 and
+  "the tessdata directory" from 4 on.
+
+- **macOS and Linux no longer need a Python on the machine.** Windows already
+  shipped its own interpreter; the other two demanded Python 3.10+, built a
+  virtualenv on first run and installed torch with pip into it. That asymmetry
+  is where most of this project's install and update fragility came from — the
+  "install Python 3.10+" dead end, the `.deps-ok` marker, the missing CA store
+  in a python.org framework Python, and the two updater bugs fixed in 2.7.0,
+  which were pip running inside a live application. Both archives now include a
+  relocatable CPython (python-build-standalone, pinned) and use it. `PYTHON=`
+  still overrides it. The dependencies are still installed on first run; baking
+  those in too would add ~700 MB to each archive because of torch.
+
+- **macOS clears its own quarantine flag.** Everything extracted from a
+  downloaded archive inherits `com.apple.quarantine`, and macOS kills an
+  unsigned quarantined binary on exec — which would have taken the bundled
+  Python and Tesseract with it, silently. `run.command` clears it on its own
+  folder, which is what the user would otherwise do by hand through the
+  Gatekeeper dialog. `PF_SKIP_QUARANTINE_CLEAR=1` opts out.
+
+### Added
+- `smoke_ocr.py`, alongside `smoke_ner.py` in the release workflow on Windows,
+  macOS and Linux: it renders a page with no text layer, runs it through the
+  real extraction path with the Tesseract that is about to ship, and fails the
+  build if the words do not come back or come back without coordinates. The
+  smoke job now depends on the three build jobs, because testing anything other
+  than the binary being published would prove nothing.
+
+### Fixed
+- The README said `PF_OCR_LANG` defaulted to `spa+eng`; the code has used
+  `spa+cat+eng` for some time. The code was right.
+
 ## [2.7.0] - 2026-08-28
 
 ### Fixed

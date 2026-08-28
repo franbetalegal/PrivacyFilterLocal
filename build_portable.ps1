@@ -6,8 +6,9 @@
     Packages the current project (server/ + frontend/ + opf) into a fully
     self-contained folder under .\portable-build that runs on any Windows
     machine without installing anything on the host. It downloads an embeddable
-    Python, installs the backend dependencies + the OPF model package, copies the
-    FastAPI backend and the built React frontend, and writes the launchers.
+    Python, installs the backend dependencies + the OPF model package, bundles
+    Tesseract for OCR of scanned PDFs, copies the FastAPI backend and the built
+    React frontend, and writes the launchers.
 
     At runtime the launcher keeps the model, HuggingFace/tiktoken caches, temp
     files and logs INSIDE the package folder (nothing in ~/.opf, %APPDATA% or
@@ -55,6 +56,21 @@ $PYTHON_DIR = Join-Path $OUT "python"
 $APP_DIR    = Join-Path $OUT "app"
 $MODEL_DIR  = Join-Path $OUT "model"
 $CACHE_DIR  = Join-Path $OUT "cache"
+$TESS_DIR   = Join-Path $OUT "tesseract"
+
+# OCR of scanned PDFs. Bundled rather than left to the user: Windows has no
+# package manager by default, so "install Tesseract yourself" meant the app
+# opened and announced that scanned documents could not be read. The binary is
+# ~35 MB and the three language files ~7 MB, against the ~4 GB of models the
+# app already downloads.
+#
+# Language data comes from tessdata_fast, pinned by tag: it is a few MB per
+# language instead of the ~15 MB of tessdata_best, and the accuracy difference
+# on 300-dpi administrative scans does not show. The set matches the
+# PF_OCR_LANG default in server/pdf_ops.py.
+$TESSDATA_TAG  = "4.1.0"
+$TESSDATA_LANGS = @("spa", "cat", "eng")
+$TESSDATA_BASE = "https://github.com/tesseract-ocr/tessdata_fast/raw/$TESSDATA_TAG"
 
 # Set by Resolve-Frontend to the chosen frontend bundle directory.
 $script:FRONTEND_DIST_SRC = $null
@@ -362,6 +378,81 @@ function Get-ModelOffline {
 }
 
 # ============================================================
+#  PHASE 6b: BUNDLE TESSERACT (OCR for scanned PDFs)
+# ============================================================
+
+# Locate an installed Tesseract to copy, installing it with Chocolatey if the
+# machine has none. Returns the install directory, or $null.
+function Get-TesseractSource {
+    $candidates = @(
+        (Join-Path $env:ProgramFiles "Tesseract-OCR"),
+        (Join-Path ${env:ProgramFiles(x86)} "Tesseract-OCR")
+    )
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path (Join-Path $c "tesseract.exe"))) { return $c }
+    }
+    $onPath = Get-Command tesseract -ErrorAction SilentlyContinue
+    if ($onPath) { return (Split-Path -Parent $onPath.Source) }
+
+    if (Get-Command choco -ErrorAction SilentlyContinue) {
+        Write-Info "Tesseract not found; installing it with Chocolatey..."
+        & choco install tesseract -y --no-progress | Out-Null
+        foreach ($c in $candidates) {
+            if ($c -and (Test-Path (Join-Path $c "tesseract.exe"))) { return $c }
+        }
+    }
+    return $null
+}
+
+function Add-Tesseract {
+    Write-Step "PHASE 6b: BUNDLING TESSERACT (OCR)"
+
+    $source = Get-TesseractSource
+    if (-not $source) {
+        # Not fatal: the package still works on documents with a text layer,
+        # and smoke_ocr.py fails the release build if OCR is missing, so this
+        # cannot reach users unnoticed.
+        Write-Warn "Tesseract not found and could not be installed."
+        Write-Warn "The package will be built WITHOUT OCR for scanned PDFs."
+        return $true
+    }
+    Write-Info "Copying Tesseract from $source"
+
+    $binDir = Join-Path $TESS_DIR "bin"
+    $dataDir = Join-Path $TESS_DIR "tessdata"
+    if (Test-Path $TESS_DIR) { Remove-Item -Recurse -Force $TESS_DIR }
+    New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+
+    # The executable and the DLLs it links against, and nothing else: the
+    # upstream install also carries its own tessdata (every language, hundreds
+    # of MB) plus docs, which is exactly what we do not want to ship.
+    Copy-Item (Join-Path $source "tesseract.exe") $binDir
+    Get-ChildItem -Path $source -Filter "*.dll" | ForEach-Object {
+        Copy-Item $_.FullName $binDir
+    }
+    Write-OK "Copied tesseract.exe + $((Get-ChildItem $binDir -Filter '*.dll').Count) DLLs"
+
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    foreach ($lang in $TESSDATA_LANGS) {
+        $target = Join-Path $dataDir "$lang.traineddata"
+        Write-Info "Downloading $lang.traineddata (tessdata_fast $TESSDATA_TAG)..."
+        Invoke-WebRequest -Uri "$TESSDATA_BASE/$lang.traineddata" `
+                          -OutFile $target -UseBasicParsing -TimeoutSec 300
+    }
+    Write-OK "Language data: $($TESSDATA_LANGS -join ', ')"
+
+    # Prove it runs here rather than discovering it on a user's machine.
+    $probe = & (Join-Path $binDir "tesseract.exe") --list-langs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "The bundled tesseract.exe does not run: $probe"
+        return $false
+    }
+    Write-OK "Bundled Tesseract runs"
+    return $true
+}
+
+# ============================================================
 #  PHASE 7: CREATE LAUNCHER SCRIPTS (inside portable-build/)
 # ============================================================
 
@@ -437,6 +528,11 @@ rem spaCy NER models (person names). Downloaded on first run like the PII
 rem model, not baked into the .exe: ~1.2 GB that would otherwise be in every
 rem installer. Without them, names written in caps are not detected at all.
 set "PF_NER_DIR=%~dp0ner-models"
+rem Bundled Tesseract (OCR of scanned PDFs). On PATH so pytesseract and the
+rem app's own component check both find it; the language data is pointed at
+rem explicitly because TESSDATA_PREFIX changed meaning between Tesseract 3 and 4.
+set "PATH=%~dp0tesseract\bin;%PATH%"
+set "PF_TESSDATA_DIR=%~dp0tesseract\tessdata"
 set "PF_HOST=127.0.0.1"
 set "PF_PORT=7860"
 if not exist "%~dp0model" mkdir "%~dp0model"
@@ -511,7 +607,7 @@ echo   Privacy Filter - Uninstall
 echo ========================================
 echo.
 echo This removes the portable package contents in this folder:
-echo   python\  app\  model\  ner-models\  cache\  tmp\  logs\
+echo   python\  app\  tesseract\  model\  ner-models\  cache\  tmp\  logs\
 echo.
 set /p confirm="Are you sure? (Y/N): "
 if /i not "%confirm%"=="Y" (
@@ -521,6 +617,7 @@ if /i not "%confirm%"=="Y" (
 )
 rd /s /q "%~dp0python" 2>nul
 rd /s /q "%~dp0app" 2>nul
+rd /s /q "%~dp0tesseract" 2>nul
 rd /s /q "%~dp0model" 2>nul
 rd /s /q "%~dp0ner-models" 2>nul
 rd /s /q "%~dp0cache" 2>nul
@@ -565,6 +662,7 @@ function Main {
     if (-not (Resolve-Frontend))          { Write-Host "`n[FATAL] Resolve frontend." -ForegroundColor Red; exit 1 }
     if (-not (Copy-ApplicationCode))      { Write-Host "`n[FATAL] Copy app code." -ForegroundColor Red; exit 1 }
     if (-not (Get-ModelOffline))          { Write-Host "`n[FATAL] Pre-download model." -ForegroundColor Red; exit 1 }
+    if (-not (Add-Tesseract))             { Write-Host "`n[FATAL] Bundle Tesseract." -ForegroundColor Red; exit 1 }
     if (-not (New-LauncherScripts))       { Write-Host "`n[FATAL] Launchers." -ForegroundColor Red; exit 1 }
 
     $elapsed = (Get-Date) - $startTime
