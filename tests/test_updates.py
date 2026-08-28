@@ -120,3 +120,112 @@ def test_dependency_reinstall_installs_package_then_requirements(monkeypatch, tm
     assert len(calls) == 2
     assert str(tmp_path / "privacy-filter") in calls[0]
     assert "-r" in calls[1]
+
+
+def test_successful_update_flags_the_restart_instead_of_describing_it(
+    monkeypatch, tmp_path
+):
+    """The backend signals the restart with a flag, not with English prose.
+
+    The message the frontend shows is Spanish and belongs to the frontend (see
+    the message contract in CLAUDE.md); the backend used to append
+    "Restarting in 2 seconds…" and the UI rendered it raw.
+    """
+    monkeypatch.setattr(updates, "PROJECT_DIR", tmp_path)
+    monkeypatch.setattr(
+        "app_update.check_for_app_update",
+        lambda: AppUpdateInfo(
+            update_available=True,
+            current_version="2.6.0",
+            latest_version="2.6.1",
+            download_url="https://example.invalid/opf-2.6.1.tar.gz",
+        ),
+    )
+    monkeypatch.setattr(
+        "app_update.download_and_install_update",
+        lambda url: (True, "Updated from 2.6.0 to 2.6.1"),
+    )
+    monkeypatch.setattr(updates, "_reinstall_dependencies", lambda m: (True, m))
+    monkeypatch.setattr(updates, "_rebuild_frontend", lambda: (True, "no frontend"))
+
+    scheduled: list[object] = []
+
+    class _Timer:
+        def __init__(self, delay, function):
+            self.delay = delay
+            self.function = function
+
+        def start(self):
+            scheduled.append((self.delay, self.function))
+
+    monkeypatch.setattr(updates.threading, "Timer", _Timer)
+
+    result = updates.install_app_update()
+
+    assert result == {
+        "status": "ok",
+        "message": "Updated from 2.6.0 to 2.6.1",
+        "restarting": True,
+    }
+    assert scheduled and scheduled[0][1] is updates.restart_server
+
+
+def test_restart_replaces_the_current_process(monkeypatch, tmp_path):
+    """Restart must re-exec, not spawn a child and die.
+
+    Spawning meant the child inherited the launcher's process group on
+    macOS/Linux, so the SIGHUP from the parent's exit killed it and the server
+    never came back. Replacing the process image keeps the PID, the session and
+    the terminal window, and releases the listening socket via close-on-exec.
+    """
+    monkeypatch.setattr(updates, "PROJECT_DIR", tmp_path)
+    monkeypatch.setattr(updates, "_venv_python", lambda: "/venv/bin/python")
+    monkeypatch.setattr(updates.os, "chdir", lambda path: None)
+
+    def _no_spawning(*args, **kwargs):
+        raise AssertionError("restart must not spawn a separate process")
+
+    monkeypatch.setattr(updates.subprocess, "Popen", _no_spawning)
+
+    execs: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        updates.os, "execv", lambda path, argv: execs.append((path, argv))
+    )
+
+    updates.restart_server()
+
+    assert execs == [("/venv/bin/python", ["/venv/bin/python", "-m", "server.main"])]
+
+
+def test_restart_falls_back_to_a_detached_process_when_exec_fails(
+    monkeypatch, tmp_path
+):
+    """Windows is where execv can refuse; the server must still come back.
+
+    The fallback needs its own session on POSIX too, otherwise it reproduces the
+    original bug.
+    """
+    monkeypatch.setattr(updates, "PROJECT_DIR", tmp_path)
+    monkeypatch.setattr(updates, "_venv_python", lambda: "/venv/bin/python")
+    monkeypatch.setattr(updates.os, "chdir", lambda path: None)
+    monkeypatch.setattr(
+        updates.os, "execv",
+        lambda path, argv: (_ for _ in ()).throw(OSError("no exec here")),
+    )
+    monkeypatch.setattr(updates.time, "sleep", lambda seconds: None)
+
+    spawned: list[dict] = []
+    monkeypatch.setattr(
+        updates.subprocess, "Popen",
+        lambda command, **kwargs: spawned.append({"command": command, **kwargs}),
+    )
+
+    exits: list[int] = []
+    monkeypatch.setattr(updates.os, "_exit", lambda code: exits.append(code))
+
+    updates.restart_server()
+
+    assert exits == [0]
+    assert spawned[0]["command"] == ["/venv/bin/python", "-m", "server.main"]
+    if updates.os.name != "nt":
+        assert spawned[0]["start_new_session"] is True

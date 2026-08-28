@@ -12,6 +12,7 @@ import os
 import shutil
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +27,11 @@ from server import messages
 logger = logging.getLogger("privacy_filter")
 
 router = APIRouter()
+
+# Identifies this server process. A client that sees a different value knows the
+# process it was talking to is gone and a new one is answering — the signal the
+# update flow waits on to reload the page after a restart.
+INSTANCE_ID = uuid.uuid4().hex
 
 # Accepted upload extensions (mirrors the old Gradio file_types list).
 TEXT_EXTS = {".txt", ".md", ".csv", ".json", ".log", ".py", ".js", ".xml", ".html"}
@@ -162,8 +168,12 @@ def api_version() -> dict:
 
 @router.get("/api/health")
 def api_health() -> dict:
-    """Return model load state (for showing a loading indicator in the UI)."""
-    return inference.status()
+    """Return model load state (for showing a loading indicator in the UI).
+
+    Carries ``instance`` so the client can tell a restart apart from a server
+    that never went away.
+    """
+    return {**inference.status(), "instance": INSTANCE_ID}
 
 
 @router.post("/api/redact")

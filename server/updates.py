@@ -84,22 +84,54 @@ def _rebuild_frontend() -> tuple[bool, str]:
         return False, f"frontend rebuild error: {exc}"
 
 
-def restart_server() -> None:
-    """Relaunch the backend as a detached process, then exit this one."""
-    python = _venv_python()
+def _spawn_detached_and_exit(python: str) -> None:
+    """Fallback restart: launch a separate backend process and exit this one.
+
+    Only reached when ``os.execv`` is unavailable or fails. ``start_new_session``
+    matters on POSIX: without it the child inherits the process group of the
+    Terminal that ran run.command, and the SIGHUP raised when this process dies
+    takes the child with it — which is exactly how the old restart failed.
+    """
     creationflags = 0
+    kwargs: dict = {}
     if os.name == "nt":
         creationflags = (
             subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
         )
+    else:
+        kwargs["start_new_session"] = True
     subprocess.Popen(
         [python, "-m", "server.main"],
         cwd=str(PROJECT_DIR),
         creationflags=creationflags,
         close_fds=True,
+        **kwargs,
     )
     time.sleep(0.5)
     os._exit(0)
+
+
+def restart_server() -> None:
+    """Restart the backend in place by replacing this process image.
+
+    ``os.execv`` keeps the PID, the session and the launcher's terminal window,
+    so nothing is orphaned and no supervisor is needed: it works the same under
+    run.command, run.sh, ``python -m server.main`` and the Windows portable.
+    Python marks its file descriptors close-on-exec (PEP 446), so uvicorn's
+    listening socket is released by the exec itself and the new process can bind
+    the same port — which ``server.main`` pinned in ``PF_PORT``.
+
+    Logged before exec'ing: past this call the process is gone and would leave
+    no trace in the log file otherwise.
+    """
+    python = _venv_python()
+    logger.info("Restarting server: exec %s -m server.main", python)
+    try:
+        os.chdir(PROJECT_DIR)
+        os.execv(python, [python, "-m", "server.main"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("exec restart failed (%s); spawning a new process", exc)
+        _spawn_detached_and_exit(python)
 
 
 def _reinstall_dependencies(message: str) -> tuple[bool, str]:
@@ -200,9 +232,11 @@ def install_app_update() -> dict:
         logger.warning("%s", built_msg)
         message = f"{message} (warning: {built_msg})"
 
-    # Restart shortly so this response can still be delivered.
+    # Restart shortly so this response can still be delivered. The client is
+    # told a restart is coming via the flag, not via prose: the Spanish sentence
+    # belongs to the frontend (see the message contract in CLAUDE.md).
     threading.Timer(2.0, restart_server).start()
-    return {"status": "ok", "message": f"{message}. Restarting in 2 seconds…"}
+    return {"status": "ok", "message": message, "restarting": True}
 
 
 def install_model_update() -> dict:

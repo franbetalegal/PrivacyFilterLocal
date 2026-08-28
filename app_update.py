@@ -367,39 +367,3 @@ def download_and_install_update(
         if temp_dir and temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)
         return False, f"Update failed: {exc}"
-
-
-def restart_app() -> None:
-    """Restart the application backend (uvicorn) as a detached process.
-
-    Kept for backwards compatibility; the FastAPI backend normally restarts via
-    ``server.updates.restart_server``.
-    """
-    import subprocess
-    import time
-
-    project_dir = Path(__file__).parent
-    if os.name == "nt":
-        venv_python = project_dir / ".venv" / "Scripts" / "python.exe"
-    else:
-        venv_python = project_dir / ".venv" / "bin" / "python"
-
-    python = str(venv_python) if venv_python.exists() else sys.executable
-
-    creationflags = 0
-    if os.name == "nt":
-        creationflags = (
-            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        )
-
-    # Start new process detached
-    subprocess.Popen(
-        [python, "-m", "server.main"],
-        cwd=str(project_dir),
-        creationflags=creationflags,
-        close_fds=True,
-    )
-
-    # Exit current process
-    time.sleep(0.5)
-    os._exit(0)

@@ -37,6 +37,18 @@ def test_health():
     assert "model_loaded" in r.json()
 
 
+def test_health_carries_a_stable_instance_id():
+    """The client tells a restart from a live server by this id changing.
+
+    Without it, the page reloaded after an update would be served by the process
+    that is still on its way out.
+    """
+    first = client.get("/api/health").json()
+    second = client.get("/api/health").json()
+    assert first["instance"]
+    assert first["instance"] == second["instance"]
+
+
 def test_redact_empty_text_is_noop():
     r = client.post("/api/redact", json={"text": "   "})
     assert r.status_code == 200
@@ -145,3 +157,32 @@ def test_apply_docx_with_curated_span_list(tmp_path):
     text = "\n".join(x.text for x in Document(str(out)).paragraphs)
     assert "Juan García" not in text
     assert "[NOMBRE_1]" in text
+
+
+def test_port_selection_skips_a_busy_port():
+    """The port has to be chosen before uvicorn starts.
+
+    uvicorn calls sys.exit(1) from Config.bind_socket when the bind fails, so
+    the old retry loop around uvicorn.run (except OSError) never ran and the
+    server died silently on a busy port.
+    """
+    import socket
+
+    from server.main import _pick_port, _port_is_free
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen(1)
+        busy = taken.getsockname()[1]
+
+        assert _port_is_free("127.0.0.1", busy) is False
+        # Which port it lands on depends on what else the host has open; that it
+        # moves past the busy one is the guarantee.
+        chosen = _pick_port("127.0.0.1", busy)
+        assert chosen is not None and chosen > busy
+
+
+def test_port_selection_gives_up_instead_of_hanging():
+    from server.main import _pick_port
+
+    assert _pick_port("127.0.0.1", 7860, attempts=0) is None

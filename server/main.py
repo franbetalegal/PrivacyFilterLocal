@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import sys
 import uuid
 from contextlib import asynccontextmanager
@@ -142,37 +143,69 @@ def _ensure_std_streams() -> None:
         logger.warning("Could not set up std streams: %s", exc)
 
 
+def _port_is_free(host: str, port: int) -> bool:
+    """Whether ``port`` can be bound on ``host`` right now."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _pick_port(host: str, start: int, attempts: int = 11) -> int | None:
+    """First free port at or after ``start``, or None if none is.
+
+    The port has to be chosen before uvicorn starts, not after it fails: uvicorn
+    calls ``sys.exit(1)`` from ``Config.bind_socket`` when the bind fails, and a
+    SystemExit walks straight through an ``except OSError`` retry loop.
+    """
+    for port in range(start, start + attempts):
+        if _port_is_free(host, port):
+            return port
+        logger.warning("Port %d in use, trying %d...", port, port + 1)
+    return None
+
+
 def main() -> None:
-    """Launch uvicorn, trying successive ports if the default is busy.
+    """Launch uvicorn on the first free port at or after PF_PORT.
 
     Host and starting port can be overridden with PF_HOST / PF_PORT (the
-    portable build sets PF_HOST=127.0.0.1 to stay local-only).
+    portable build sets PF_HOST=127.0.0.1 to stay local-only). The port actually
+    used is written back to PF_PORT so a restart (see
+    :func:`server.updates.restart_server`, which re-execs this module) comes back
+    on the same port the user's browser is already pointing at.
     """
     import uvicorn
 
     _ensure_std_streams()
 
     host = os.environ.get("PF_HOST", "0.0.0.0")
-    port = int(os.environ.get("PF_PORT", "7860"))
-    max_port = port + 10
-    while port <= max_port:
-        try:
-            logger.info("Open http://localhost:%d", port)
-            # log_config=None: don't let uvicorn install its own stdout/stderr
-            # stream handlers (they break under pythonw); our root file handler
-            # already captures uvicorn's logs via propagation.
-            uvicorn.run(app, host=host, port=port, workers=1, log_config=None)
-            break
-        except OSError as e:
-            if "address already in use" in str(e).lower() or "10048" in str(e):
-                logger.warning("Port %d in use, trying %d...", port, port + 1)
-                port += 1
-            else:
-                logger.error("Server failed to start: %s", e, exc_info=True)
-                raise
-        except Exception as e:  # noqa: BLE001
-            logger.error("Server crashed on startup: %s", e, exc_info=True)
-            raise
+    start_port = int(os.environ.get("PF_PORT", "7860"))
+    port = _pick_port(host, start_port)
+    if port is None:
+        logger.error(
+            "No free port between %d and %d; is another instance running?",
+            start_port, start_port + 10,
+        )
+        raise SystemExit(1)
+    os.environ["PF_PORT"] = str(port)
+    try:
+        logger.info("Open http://localhost:%d", port)
+        # log_config=None: don't let uvicorn install its own stdout/stderr
+        # stream handlers (they break under pythonw); our root file handler
+        # already captures uvicorn's logs via propagation.
+        uvicorn.run(app, host=host, port=port, workers=1, log_config=None)
+    except SystemExit:
+        # uvicorn exits this way when it cannot bind (lost the race with another
+        # process between the probe and the real bind). Say so instead of dying
+        # silently.
+        logger.error("Server failed to start on port %d", port)
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.error("Server crashed on startup: %s", e, exc_info=True)
+        raise
 
 
 if __name__ == "__main__":

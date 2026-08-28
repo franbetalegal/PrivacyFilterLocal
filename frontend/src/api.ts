@@ -125,6 +125,8 @@ export interface Health {
   device?: string;
   /** Human-readable device label ("mps (Apple Silicon GPU via Metal)"). */
   device_label?: string;
+  /** Random id of the server process. Changes only when the backend restarts. */
+  instance?: string;
 }
 
 export async function getHealth(): Promise<Health> {
@@ -365,7 +367,12 @@ export async function getUpdates(): Promise<UpdatesInfo> {
   return jsonOrThrow(await fetch("/api/updates"));
 }
 
-export async function installAppUpdate(): Promise<{ status: string; message: string }> {
+export async function installAppUpdate(): Promise<{
+  status: string;
+  message: string;
+  /** The backend is about to restart itself; wait for a new Health.instance. */
+  restarting?: boolean;
+}> {
   return jsonOrThrow(await fetch("/api/updates/app", { method: "POST" }));
 }
 
