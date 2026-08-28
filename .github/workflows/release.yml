@@ -19,6 +19,19 @@ on:
 permissions:
   contents: write
 
+# Pinned so a build is reproducible and a bad upstream release cannot silently
+# change what ships.
+env:
+  # Relocatable CPython bundled into the macOS and Linux tarballs, so neither
+  # needs a Python on the machine. Windows already embeds its own.
+  PBS_TAG: "20260825"
+  PBS_VERSION: "3.12.14"
+  # Language data for the bundled Tesseract. tessdata_fast is a few MB per
+  # language against ~15 MB for tessdata_best, with no visible difference on
+  # 300-dpi administrative scans. The set matches PF_OCR_LANG in
+  # server/pdf_ops.py.
+  TESSDATA_TAG: "4.1.0"
+
 jobs:
   version:
     runs-on: ubuntu-latest
@@ -56,6 +69,14 @@ jobs:
           name: windows-exe
           path: dist/*.exe
           if-no-files-found: error
+      # Uploaded on its own because the release artifact is a self-extracting
+      # installer: the smoke job cannot look inside it, and running the OCR
+      # check against some other Tesseract would prove nothing.
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-tesseract
+          path: portable-build/tesseract
+          if-no-files-found: error
 
   linux:
     needs: version
@@ -79,6 +100,7 @@ jobs:
           pnpm -C frontend run build
       - name: Assemble Linux tarball
         run: |
+          set -euo pipefail
           VER="${{ needs.version.outputs.version }}"
           STAGE="PrivacyFilter-linux-v$VER"
           mkdir -p "$STAGE/frontend"
@@ -87,6 +109,41 @@ jobs:
           cp -r frontend/dist "$STAGE/frontend/dist"
           cp packaging/linux/run.sh "$STAGE/run.sh"
           chmod +x "$STAGE/run.sh"
+
+          # A relocatable CPython, so the machine needs no Python and no
+          # python3-venv package. run.sh prefers python/bin/python3 and only
+          # falls back to the system one.
+          curl -fsSL -o /tmp/cpython.tar.gz \
+            "https://github.com/astral-sh/python-build-standalone/releases/download/$PBS_TAG/cpython-$PBS_VERSION+$PBS_TAG-x86_64-unknown-linux-gnu-install_only.tar.gz"
+          tar -xzf /tmp/cpython.tar.gz -C "$STAGE"
+          test -x "$STAGE/python/bin/python3"
+          "$STAGE/python/bin/python3" --version
+
+          # Tesseract with the shared libraries it links against, so OCR of
+          # scanned PDFs works without apt. The core C/loader libraries are
+          # deliberately NOT copied: those must come from the host, or the
+          # binary will not load at all. libstdc++ and libgcc ARE copied,
+          # which is what lets a binary built on this runner start on an older
+          # distribution.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tesseract-ocr
+          mkdir -p "$STAGE/tesseract/bin" "$STAGE/tesseract/lib" "$STAGE/tesseract/tessdata"
+          cp "$(command -v tesseract)" "$STAGE/tesseract/bin/tesseract"
+          ldd "$(command -v tesseract)" | awk '{print $3}' | grep '^/' | sort -u |
+          while read -r lib; do
+            case "$(basename "$lib")" in
+              libc.so*|libm.so*|libpthread.so*|libdl.so*|librt.so*|ld-linux*) continue ;;
+            esac
+            cp -Lu "$lib" "$STAGE/tesseract/lib/" || true
+          done
+
+          for lang in spa cat eng; do
+            curl -fsSL -o "$STAGE/tesseract/tessdata/$lang.traineddata" \
+              "https://github.com/tesseract-ocr/tessdata_fast/raw/$TESSDATA_TAG/$lang.traineddata"
+          done
+          LD_LIBRARY_PATH="$PWD/$STAGE/tesseract/lib" \
+            "$STAGE/tesseract/bin/tesseract" --version
+
           # Strip build noise from the bundled opf package copy.
           find "$STAGE" -name '__pycache__' -type d -prune -exec rm -rf {} +
           rm -rf "$STAGE/privacy-filter/.git" "$STAGE/privacy-filter/build" \
@@ -117,6 +174,7 @@ jobs:
           pnpm -C frontend run build
       - name: Assemble macOS tarball
         run: |
+          set -euo pipefail
           VER="${{ needs.version.outputs.version }}"
           STAGE="PrivacyFilter-macos-arm64-v$VER"
           mkdir -p "$STAGE/frontend"
@@ -125,6 +183,34 @@ jobs:
           cp -r frontend/dist "$STAGE/frontend/dist"
           cp packaging/macos/run.command "$STAGE/run.command"
           chmod +x "$STAGE/run.command"
+
+          # A relocatable CPython, so the machine needs neither Homebrew nor a
+          # system Python. run.command prefers python/bin/python3.
+          curl -fsSL -o /tmp/cpython.tar.gz \
+            "https://github.com/astral-sh/python-build-standalone/releases/download/$PBS_TAG/cpython-$PBS_VERSION+$PBS_TAG-aarch64-apple-darwin-install_only.tar.gz"
+          tar -xzf /tmp/cpython.tar.gz -C "$STAGE"
+          test -x "$STAGE/python/bin/python3"
+          "$STAGE/python/bin/python3" --version
+
+          # Tesseract, made relocatable: dylibbundler copies every non-system
+          # dylib next to the binary and rewrites the load paths to
+          # @executable_path/../lib, so it runs from wherever the user unpacked
+          # the archive instead of from /opt/homebrew.
+          brew install --quiet tesseract dylibbundler
+          mkdir -p "$STAGE/tesseract/bin" "$STAGE/tesseract/lib" "$STAGE/tesseract/tessdata"
+          cp "$(brew --prefix tesseract)/bin/tesseract" "$STAGE/tesseract/bin/tesseract"
+          dylibbundler -od -b -x "$STAGE/tesseract/bin/tesseract" \
+                       -d "$STAGE/tesseract/lib" -p '@executable_path/../lib' \
+                       -s "$(brew --prefix)/lib"
+
+          # Only the languages the app asks for by default. Homebrew's own
+          # tessdata carries 163 of them, which is not what we want to ship.
+          for lang in spa cat eng; do
+            curl -fsSL -o "$STAGE/tesseract/tessdata/$lang.traineddata" \
+              "https://github.com/tesseract-ocr/tessdata_fast/raw/$TESSDATA_TAG/$lang.traineddata"
+          done
+          "$STAGE/tesseract/bin/tesseract" --version
+
           # Strip build noise from the bundled opf package copy.
           find "$STAGE" -name '__pycache__' -type d -prune -exec rm -rf {} +
           rm -rf "$STAGE/privacy-filter/.git" "$STAGE/privacy-filter/build" \
@@ -148,7 +234,7 @@ jobs:
   # torch is not installed on purpose — the NER layer does not need it, and the
   # opf checkpoint is 2.7 GB we do not have to move to answer this question.
   smoke:
-    needs: version
+    needs: [version, windows, linux, macos]
     strategy:
       fail-fast: false
       matrix:
@@ -163,6 +249,38 @@ jobs:
         run: pip install -r requirements-server.txt
       - name: Detect a name written in caps
         run: python smoke_ner.py
+      # The OCR half, against the Tesseract that actually ships. It lives in the
+      # built artifact and not in the checkout, so each platform pulls its own:
+      # the tarballs carry theirs inside, Windows uploads the folder separately
+      # because its artifact is an installer.
+      - uses: actions/download-artifact@v7
+        with:
+          name: >-
+            ${{ matrix.os == 'windows-latest' && 'windows-tesseract'
+             || matrix.os == 'macos-14' && 'macos-tarball'
+             || 'linux-tarball' }}
+          path: artifact
+      - name: Read a page that has no text layer (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          set -euo pipefail
+          tar -xzf artifact/*.tar.gz -C artifact
+          TESS="$(find "$PWD/artifact" -maxdepth 3 -type d -name tesseract | head -1)"
+          test -n "$TESS"
+          export PATH="$TESS/bin:$PATH"
+          export PF_TESSDATA_DIR="$TESS/tessdata"
+          export LD_LIBRARY_PATH="$TESS/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          python smoke_ocr.py
+      # PowerShell on Windows so the paths handed to tesseract.exe are Windows
+      # paths; git bash would produce /d/a/... which the binary cannot open.
+      - name: Read a page that has no text layer (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: powershell
+        run: |
+          $tess = Join-Path $PWD "artifact"
+          $env:PATH = (Join-Path $tess "bin") + ";" + $env:PATH
+          $env:PF_TESSDATA_DIR = Join-Path $tess "tessdata"
+          python smoke_ocr.py
 
   release:
     needs: [version, windows, linux, macos, smoke]

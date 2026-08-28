@@ -31,6 +31,7 @@ import threading
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from server import concurrency
@@ -47,6 +48,29 @@ _MIN_OCR_PAGES_FOR_PARALLEL = 3
 # Never rasterise below this, even when the embedded image is coarser:
 # Tesseract degrades sharply on very low-resolution input.
 _MIN_OCR_DPI = 150
+
+
+def _tessdata_config() -> str:
+    """``--tessdata-dir`` for the bundled language data, or an empty config.
+
+    The builds ship Tesseract inside the app folder and the launchers point
+    ``PF_TESSDATA_DIR`` at its ``tessdata``. Passing the path explicitly beats
+    setting ``TESSDATA_PREFIX``: that variable meant "the directory *containing*
+    tessdata" in Tesseract 3 and "the tessdata directory itself" from 4 on, and
+    guessing wrong fails at OCR time with an unhelpful error.
+
+    Empty when the variable is unset or points nowhere, which is the
+    system-install case: Tesseract then resolves its own data as it always did.
+    """
+    directory = os.environ.get("PF_TESSDATA_DIR", "").strip()
+    if directory and Path(directory).is_dir():
+        return f'--tessdata-dir "{directory}"'
+    if directory:
+        logger.warning(
+            "PF_TESSDATA_DIR=%r is not a directory; letting Tesseract find its "
+            "own language data.", directory,
+        )
+    return ""
 
 
 def _ocr_line_breaks_enabled() -> bool:
@@ -220,7 +244,8 @@ def _ocr_page(page, page_idx: int, fitz_mod, *, ocr_threads: int = 1):
         pix = page.get_pixmap(dpi=dpi, colorspace=fitz_mod.csGRAY)
         img = Image.frombytes("L", (pix.width, pix.height), pix.samples)
         data = pytesseract.image_to_data(
-            img, lang=lang, output_type=pytesseract.Output.DICT
+            img, lang=lang, config=_tessdata_config(),
+            output_type=pytesseract.Output.DICT,
         )
     except (pytesseract.TesseractNotFoundError, RuntimeError) as exc:
         logger.warning("OCR skipped on page %d: %s", page_idx, exc)

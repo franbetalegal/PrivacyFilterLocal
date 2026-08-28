@@ -16,15 +16,15 @@ export default function ComponentWarnings({ health }: { health: Health | null })
         <div>
           <strong>Los documentos escaneados no se pueden leer.</strong>
           <p className="muted">
-            Falta Tesseract, el motor de OCR. Un PDF sin capa de texto se
-            extraerá vacío y no se detectará nada en él, lo que en pantalla se
-            parece a un documento sin datos personales. Los documentos con
-            texto seleccionable se procesan con normalidad.
+            No está disponible Tesseract, el motor de OCR. Un PDF sin capa de
+            texto se extraerá vacío y no se detectará nada en él, lo que en
+            pantalla se parece a un documento sin datos personales. Los
+            documentos con texto seleccionable se procesan con normalidad.
           </p>
           <p className="muted">
-            Para instalarlo: <code>brew install tesseract tesseract-lang</code>{" "}
-            en macOS, <code>sudo apt install tesseract-ocr tesseract-ocr-spa</code>{" "}
-            en Linux, o el instalador de UB Mannheim en Windows.
+            Esta instalación debería traerlo incluido, así que esto indica que
+            algo le falta o no arranca. Descargue el diagnóstico desde la
+            cabecera y envíelo para soporte, o vuelva a instalar la aplicación.
           </p>
         </div>
       </div>

@@ -61,9 +61,11 @@ Grab the latest build from the
 3. It extracts the app into a **`PrivacyFilter`** subfolder next to the `.exe`
    and opens automatically in your browser.
 
-> The first run downloads the detection models (~2.7 GB for the PII model plus
-> ~1.2 GB for the Spanish/Catalan name models); progress is shown in the app,
-> which stays on its preparing screen until every layer is in place.
+> Nothing else has to be installed: the package carries its own Python and its
+> own Tesseract, so OCR of scanned PDFs works out of the box. The first run
+> downloads the detection models (~2.7 GB for the PII model plus ~1.2 GB for the
+> Spanish/Catalan name models); progress is shown in the app, which stays on its
+> preparing screen until every layer is in place.
 > SmartScreen may warn about the unsigned `.exe` the first time — choose
 > **More info → Run anyway**.
 
@@ -78,10 +80,8 @@ Grab the latest build from the
    plus ~1.2 GB for the Spanish/Catalan name models, progress shown in the
    app).
 
-Requires macOS 12+ (Apple Silicon), Python 3.10+ (Homebrew:
-`brew install python`) and — for OCR of scanned PDFs — Tesseract
-(`brew install tesseract tesseract-lang`). The launcher warns if Tesseract is
-missing but still opens the app for text-layer documents.
+Requires macOS 12+ (Apple Silicon) and nothing else. The archive carries its
+own Python and its own Tesseract, so OCR of scanned PDFs works out of the box.
 
 ### Linux (technical users)
 1. Download **`PrivacyFilter-linux-vX.Y.Z.tar.gz`** and extract it.
@@ -90,10 +90,11 @@ missing but still opens the app for text-layer documents.
    plus ~1.2 GB for the Spanish/Catalan name models); later runs just start the
    app and open your browser.
 
-Requires Python 3.10+ (`python3` and `python3-venv`) and — for OCR of scanned
-PDFs — Tesseract (`sudo apt install tesseract-ocr tesseract-ocr-spa
-tesseract-ocr-cat`). The launcher warns if it is missing but still opens the
-app for text-layer documents.
+The archive carries its own Python and its own Tesseract, so nothing has to be
+installed first and OCR of scanned PDFs works out of the box. The bundled
+Tesseract is built on Ubuntu 24.04 and ships the libraries it links against; on
+a much older distribution it may refuse to load, and the launcher then says so
+and points at `apt install tesseract-ocr`.
 
 ### All platforms
 - **Stop**: the **Quit** button in the UI (the server keeps running if you only
@@ -110,8 +111,8 @@ models are what find a person written in caps — the form every Spanish tax and
 court document uses — so running without them returns documents that look
 anonymised and are not. Releases up to 2.6.3 did exactly that; see the 2.7.0
 entry in [CHANGELOG.md](CHANGELOG.md). The **Información** tab lists the state
-of each component, and the app reports a missing Tesseract there too (that one
-only affects scanned documents, so it does not block anything).
+of each component, including OCR, which does not block anything because it only
+affects scanned documents.
 
 ## Build the portable package
 
@@ -127,8 +128,10 @@ cd PrivacyFilterLocal
 ```
 
 The script downloads an embeddable Python, installs CPU-only PyTorch + the `opf`
-package + `requirements-server.txt`, builds/uses `frontend/dist`, copies the
-backend, and writes the launchers into `portable-build/`.
+package + `requirements-server.txt`, bundles Tesseract (the binary it finds
+installed, or one it installs with Chocolatey, plus `spa`/`cat`/`eng` from
+`tessdata_fast`), builds/uses `frontend/dist`, copies the backend, and writes
+the launchers into `portable-build/`.
 
 Wrap that folder into the single self-extracting `.exe`:
 
@@ -275,7 +278,8 @@ installs them itself and will not serve a document until they are in place.
 | `PF_NER_DIR` | `<app folder>/ner-models` | Where the downloaded spaCy models live |
 | `PF_NER_LABELS` | `PER,LOC` | Entity types to keep from NER. Add `ORG` to redact company and institution names too — off by default because an entity name keeps the document readable and rarely protects a natural person |
 | `PF_REDACT_ALL_DATES` | `0` | Redact every date instead of only dates of birth. Off by default: an acquisition or transmission date is what a tax computation rests on |
-| `PF_OCR_LANG` | `spa+eng` | Tesseract languages (use `spa+cat+eng` for bilingual) |
+| `PF_OCR_LANG` | `spa+cat+eng` | Tesseract languages. The builds ship data for exactly these three |
+| `PF_TESSDATA_DIR` | *(set by the launchers)* | Language data for the bundled Tesseract, passed as `--tessdata-dir`. Unset means a system install resolves its own |
 | `PF_OCR_DPI` | `300` | Rasterisation DPI for scanned pages |
 | `PF_RESERVED_CORES` | `2` | CPU cores always kept free for the host |
 | `PF_MAX_WORKERS` | *(unset)* | Optional hard cap on worker processes/threads |
