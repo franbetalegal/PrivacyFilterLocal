@@ -65,10 +65,64 @@ export default function InfoTab() {
 
       <h2>Seguridad</h2>
       <ul>
-        <li>100% local: no se envía nada a internet</li>
+        <li>
+          Los documentos no salen de su equipo: se analizan y se anonimizan en
+          local, y nunca se envían a ningún servidor
+        </li>
         <li>El modelo se ejecuta en su equipo</li>
+        <li>
+          Las únicas conexiones que hace la aplicación son para descargar los
+          modelos la primera vez y para comprobar si hay versiones nuevas de la
+          aplicación y de los modelos
+        </li>
         <li>Licencia Apache 2.0</li>
       </ul>
+
+      <h2>Componentes de detección</h2>
+      <p className="muted">
+        Las tres capas trabajan juntas. Si falta la de nombres, los que están
+        escritos en mayúsculas no se detectan y el documento resultante parece
+        anonimizado sin estarlo.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Componente</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Modelo PII</td>
+            <td>
+              {health?.components?.opf.available
+                ? "Instalado"
+                : "No disponible"}
+            </td>
+          </tr>
+          {health?.components?.ner.models.map((model) => (
+            <tr key={model.name}>
+              <td>
+                Nombres y lugares (
+                {model.name.startsWith("ca_") ? "catalán" : "castellano"})
+              </td>
+              <td>
+                {model.present
+                  ? `Instalado${model.version ? ` · v${model.version}` : ""}`
+                  : "No disponible"}
+              </td>
+            </tr>
+          ))}
+          <tr>
+            <td>OCR de documentos escaneados</td>
+            <td>
+              {health?.components?.ocr.available
+                ? "Instalado"
+                : "No disponible — los PDF escaneados no se podrán leer"}
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
       <h2>Modelo</h2>
       {health?.device_label && (

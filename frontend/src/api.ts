@@ -115,12 +115,53 @@ export async function getVersion(): Promise<string> {
   return data.version;
 }
 
+/** One spaCy NER model, as reported by /api/health. */
+export interface NerModelStatus {
+  name: string;
+  present: boolean;
+  /** "managed" (downloaded by the app), "pip" (installed in the venv), or null. */
+  source: "managed" | "pip" | null;
+  version: string | null;
+  path: string | null;
+  /** Newest version compatible with the installed spaCy, if the check ran. */
+  latest: string | null;
+}
+
+/** State of every detection component. The app is only usable when the model
+ *  and the NER layer are both in place: without the NER models, names written
+ *  in caps are not detected and the result still looks like a clean document. */
+export interface HealthComponents {
+  opf: {
+    available: boolean;
+    loaded: boolean;
+    downloading: boolean;
+    download_pct: number;
+    error: string | null;
+    checkpoint_dir: string;
+  };
+  ner: {
+    installing: boolean;
+    install_pct: number;
+    /** Model currently being downloaded, while ``installing``. */
+    current: string | null;
+    error: string | null;
+    available: boolean;
+    loaded: number;
+    models: NerModelStatus[];
+  };
+  /** Tesseract. Only affects scanned documents, so it does not gate the app. */
+  ocr: { available: boolean; binary: string | null };
+}
+
 export interface Health {
   model_loaded: boolean;
   loading: boolean;
   downloading: boolean;
   download_pct: number;
   error: string | null;
+  /** Decided by the server so there is one definition of "can anonymise now". */
+  ready?: boolean;
+  components?: HealthComponents;
   /** Detected inference device: cpu / cuda / mps. */
   device?: string;
   /** Human-readable device label ("mps (Apple Silicon GPU via Metal)"). */
@@ -131,6 +172,14 @@ export interface Health {
 
 export async function getHealth(): Promise<Health> {
   return jsonOrThrow(await fetch("/api/health"));
+}
+
+/** Whether the app may be used. Trusts the server's own verdict; the older
+ *  fields are the fallback for a backend that predates it. */
+export function isReady(health: Health | null): boolean {
+  if (health === null) return false;
+  if (typeof health.ready === "boolean") return health.ready;
+  return !health.downloading && !health.error;
 }
 
 export const DIAGNOSTICS_URL = "/api/diagnostics";

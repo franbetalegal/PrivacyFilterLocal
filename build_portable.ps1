@@ -433,12 +433,17 @@ set "TIKTOKEN_CACHE_DIR=%~dp0cache\tiktoken"
 set "TMP=%~dp0tmp"
 set "TEMP=%~dp0tmp"
 set "PF_LOG_DIR=%~dp0logs"
+rem spaCy NER models (person names). Downloaded on first run like the PII
+rem model, not baked into the .exe: ~1.2 GB that would otherwise be in every
+rem installer. Without them, names written in caps are not detected at all.
+set "PF_NER_DIR=%~dp0ner-models"
 set "PF_HOST=127.0.0.1"
 set "PF_PORT=7860"
 if not exist "%~dp0model" mkdir "%~dp0model"
 if not exist "%~dp0cache" mkdir "%~dp0cache"
 if not exist "%~dp0tmp" mkdir "%~dp0tmp"
 if not exist "%~dp0logs" mkdir "%~dp0logs"
+if not exist "%~dp0ner-models" mkdir "%~dp0ner-models"
 '@
 
     # launch.bat: HIDDEN launcher (run by the .vbs). Starts the server windowless
@@ -506,7 +511,7 @@ echo   Privacy Filter - Uninstall
 echo ========================================
 echo.
 echo This removes the portable package contents in this folder:
-echo   python\  app\  model\  cache\  tmp\  logs\
+echo   python\  app\  model\  ner-models\  cache\  tmp\  logs\
 echo.
 set /p confirm="Are you sure? (Y/N): "
 if /i not "%confirm%"=="Y" (
@@ -517,6 +522,7 @@ if /i not "%confirm%"=="Y" (
 rd /s /q "%~dp0python" 2>nul
 rd /s /q "%~dp0app" 2>nul
 rd /s /q "%~dp0model" 2>nul
+rd /s /q "%~dp0ner-models" 2>nul
 rd /s /q "%~dp0cache" 2>nul
 rd /s /q "%~dp0tmp" 2>nul
 rd /s /q "%~dp0logs" 2>nul

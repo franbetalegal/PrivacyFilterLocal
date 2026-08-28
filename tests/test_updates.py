@@ -75,11 +75,13 @@ def test_frontend_rebuild_attempted_when_sources_are_present(monkeypatch, tmp_pa
     assert "Node/pnpm" in message
 
 
-def test_dependency_reinstall_warns_without_failing_the_update(monkeypatch, tmp_path):
-    """New sources with a stale venv is a warning, not a failed update.
+def test_dependency_reinstall_failure_fails_the_update(monkeypatch, tmp_path):
+    """New sources against a stale venv is a failed update, not a footnote.
 
-    The files are already in place by then; refusing the update would leave the
-    install in the same state while reporting failure.
+    This used to return success with the pip error appended to the message, so
+    the app said "updated" while running new code against the previous
+    version's packages — the state that let three releases ship without the
+    spaCy NER models and nothing say so.
     """
     (tmp_path / "privacy-filter").mkdir()
     monkeypatch.setattr(updates, "PROJECT_DIR", tmp_path)
@@ -92,9 +94,37 @@ def test_dependency_reinstall_warns_without_failing_the_update(monkeypatch, tmp_
 
     ok, message = updates._reinstall_dependencies("Updated to v2.6.1")
 
-    assert ok
+    assert not ok
     assert "Updated to v2.6.1" in message
     assert "pip exploded" in message
+
+
+def test_dependency_reinstall_can_skip_the_editable_package(monkeypatch, tmp_path):
+    """The git-checkout branch must not undo its own editable install.
+
+    It reinstalls ``privacy-filter`` with ``-e`` and then asks for the pinned
+    requirements; installing the package again as a regular wheel would replace
+    the editable install behind its back.
+    """
+    (tmp_path / "privacy-filter").mkdir()
+    (tmp_path / "requirements-server.txt").write_text("fastapi\n", encoding="utf-8")
+    monkeypatch.setattr(updates, "PROJECT_DIR", tmp_path)
+    calls: list[list[str]] = []
+
+    class _Ok:
+        returncode = 0
+        stderr = ""
+
+    monkeypatch.setattr(
+        updates.subprocess, "run",
+        lambda command, **kwargs: (calls.append(command), _Ok())[1],
+    )
+
+    ok, _ = updates._reinstall_dependencies("Updated", include_package=False)
+
+    assert ok
+    assert len(calls) == 1
+    assert "-r" in calls[0]
 
 
 def test_dependency_reinstall_installs_package_then_requirements(monkeypatch, tmp_path):

@@ -51,6 +51,21 @@ _state = {"loaded": False, "loading": False, "device": None}
 # First-run model download progress (surfaced in the web UI instead of a console).
 _dl_state = {"downloading": False, "pct": 0, "error": None}
 
+# Same, for the spaCy NER models. Kept separate from _dl_state because the two
+# downloads are independent artifacts with very different sizes, and the UI
+# names which one it is waiting for.
+#
+# ``latest`` caches what the startup check learned about newer published
+# versions, so /api/health can answer that question without a network call per
+# poll.
+_ner_state: dict = {
+    "installing": False,
+    "pct": 0,
+    "current": None,
+    "error": None,
+    "latest": {},
+}
+
 
 def checkpoint_dir() -> Path:
     """Return the OPF checkpoint directory.
@@ -243,10 +258,183 @@ def ensure_model_ready() -> None:
         _dl_state["downloading"] = False
 
 
+def _ner_progress(name: str, message: str, fraction: float, index: int, total: int) -> None:
+    """Turn one model's 0..1 progress into a percentage across all of them.
+
+    Logged only when the whole percent changes: the downloader reports every
+    512 KB block, which on a 600 MB model is over a thousand identical lines in
+    the file the support bundle ships.
+    """
+    share = (index + max(0.0, min(1.0, fraction))) / max(1, total)
+    pct = int(round(share * 100))
+    changed = pct != _ner_state["pct"]
+    _ner_state["pct"] = pct
+    _ner_state["current"] = name
+    if changed:
+        logger.info("%s (%d%%)", message, pct)
+
+
+def ensure_ner_models_ready() -> None:
+    """Blocking: install every configured spaCy model that is missing.
+
+    This is what keeps the app from anonymising with the name detector absent.
+    Every release up to 2.6.3 shipped without these models — no launcher, build
+    script or CI job installed them — so documents came back with every name
+    written in caps untouched while DNI and addresses were redacted, which
+    reads as a working anonymisation and is not one.
+
+    Safe to call when everything is present (no-op). Failures are recorded in
+    ``_ner_state["error"]`` rather than raised: the caller is the startup
+    preflight and the UI reports the state.
+    """
+    from server import ner_models
+
+    pending = ner_models.missing()
+    if not pending:
+        return
+    logger.info("NER models missing, installing: %s", ", ".join(pending))
+    _ner_state["installing"] = True
+    _ner_state["error"] = None
+    _ner_state["pct"] = 0
+    failures: list[str] = []
+    try:
+        for index, name in enumerate(pending):
+            ok, message = ner_models.install(
+                name,
+                progress_callback=lambda msg, frac, n=name, i=index: _ner_progress(
+                    n, msg, frac, i, len(pending)
+                ),
+            )
+            if not ok:
+                failures.append(message)
+        if failures:
+            _ner_state["error"] = " ".join(failures)
+        else:
+            _ner_state["pct"] = 100
+    finally:
+        _ner_state["installing"] = False
+        _ner_state["current"] = None
+
+
+def refresh_ner_models() -> None:
+    """Install a newer compatible model version when one has been published.
+
+    Runs on every start, after the models are known to be present, and never
+    blocks availability: not knowing about a new version is not a reason to
+    keep anyone waiting. An install is atomic and validated before it replaces
+    anything (see :func:`server.ner_models.install`), and the loaded pipelines
+    are dropped afterwards so the running process picks the new version up.
+    """
+    from server import ner_es, ner_models
+
+    try:
+        table = ner_models._compatibility_table()
+    except Exception as exc:  # noqa: BLE001 — offline is a normal state here
+        logger.info("Skipping the NER model version check: %s", exc)
+        return
+
+    upgraded = False
+    for name in ner_models.MODEL_NAMES:
+        latest = ner_models.latest_compatible(name, table=table)
+        if latest:
+            _ner_state["latest"][name] = latest
+        # Only the copy this app manages is upgraded. A pip-installed model
+        # belongs to whoever created the virtualenv (a development machine),
+        # and silently shadowing it with a download would be a surprise.
+        if not ner_models.is_installed(name):
+            continue
+        current = ner_models.installed_version(name)
+        if not latest or not current or latest == current:
+            continue
+        logger.info("Newer NER model published: %s %s -> %s", name, current, latest)
+        ok, message = ner_models.install(name, version=latest)
+        if ok:
+            upgraded = True
+        else:
+            logger.warning("Keeping %s %s: %s", name, current, message)
+    if upgraded:
+        ner_es.reload()
+
+
+def run_preflight() -> None:
+    """Blocking: get every detection component in place, in order.
+
+    Order matters: the opf checkpoint first because it is the larger download
+    and the one the UI already explains, then the NER models, then the version
+    check. All three report into the state the health endpoint serves.
+    """
+    ensure_model_ready()
+    ensure_ner_models_ready()
+    refresh_ner_models()
+
+
+def ner_status() -> dict:
+    """NER component state for /api/health and the diagnostics bundle."""
+    from server import ner_es, ner_models
+
+    models = ner_models.status()
+    for entry in models:
+        entry["latest"] = _ner_state["latest"].get(entry["name"])
+    return {
+        "installing": _ner_state["installing"],
+        "install_pct": _ner_state["pct"],
+        "current": _ner_state["current"],
+        "error": _ner_state["error"],
+        # Presence, not "already loaded": the pipelines load lazily on the
+        # first document and health must not pay for a 1.2 GB load to answer.
+        "available": not ner_models.missing(),
+        "loaded": ner_es.loaded_model_count(),
+        "models": models,
+    }
+
+
 def start_background_download() -> None:
-    """Kick off the first-run model download without blocking startup."""
+    """Kick off the first-run preflight without blocking startup.
+
+    The server listens immediately; /api/health reports the progress and the UI
+    holds the "Preparing" screen until every component is ready.
+    """
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(_executor, ensure_model_ready)
+    loop.run_in_executor(_executor, run_preflight)
+
+
+def ocr_status() -> dict:
+    """Whether scanned pages can be read at all.
+
+    Not used to gate anything today, but a missing Tesseract makes a scanned
+    PDF extract as empty text, and "no detections" then looks exactly like a
+    clean document. Reporting it beats leaving it in the log.
+    """
+    import shutil
+
+    try:
+        import pytesseract  # noqa: F401
+        library = True
+    except ImportError:
+        library = False
+    binary = shutil.which("tesseract")
+    return {"available": bool(library and binary), "binary": binary}
+
+
+def components() -> dict:
+    """State of every detection component, for health and diagnostics.
+
+    One place that answers "is this install complete?". The bug this exists for
+    was invisible for three releases precisely because nothing ever asked.
+    """
+    ner = ner_status()
+    return {
+        "opf": {
+            "available": _checkpoint_is_valid(checkpoint_dir()),
+            "loaded": _state["loaded"],
+            "downloading": _dl_state["downloading"],
+            "download_pct": _dl_state["pct"],
+            "error": _dl_state["error"],
+            "checkpoint_dir": str(checkpoint_dir()),
+        },
+        "ner": ner,
+        "ocr": ocr_status(),
+    }
 
 
 def status() -> dict:
@@ -254,6 +442,18 @@ def status() -> dict:
     from server.device import describe, detect_device
 
     device = _state["device"] or detect_device()
+    parts = components()
+    # ``ready`` is decided here rather than in the browser so there is a single
+    # definition of "this app can anonymise properly right now". OCR is not in
+    # it: a missing Tesseract costs scanned documents, not names.
+    ready = (
+        parts["opf"]["available"]
+        and not parts["opf"]["downloading"]
+        and parts["ner"]["available"]
+        and not parts["ner"]["installing"]
+        and parts["opf"]["error"] is None
+        and parts["ner"]["error"] is None
+    )
     return {
         "model_loaded": _state["loaded"],
         "loading": _state["loading"],
@@ -262,6 +462,8 @@ def status() -> dict:
         "error": _dl_state["error"],
         "device": device,
         "device_label": describe(device),
+        "ready": ready,
+        "components": parts,
     }
 
 

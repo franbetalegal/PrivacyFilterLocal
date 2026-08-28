@@ -44,12 +44,16 @@ FRONTEND_DIST = PROJECT_DIR / "frontend" / "dist"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start the first-run model download in the background so it doesn't block
-    # the server from listening; progress is exposed via /api/health.
+    # Start the preflight in the background so it doesn't block the server from
+    # listening: it downloads the opf checkpoint and the spaCy NER models if
+    # they are missing, then checks for a newer model version. Progress and the
+    # per-component state are exposed via /api/health, and the UI stays on the
+    # "Preparing" screen until everything is in place — an app that anonymises
+    # with the name detector missing looks like it worked and did not.
     try:
         inference.start_background_download()
     except Exception as exc:  # noqa: BLE001
-        logger.error("Could not start background model download: %s", exc)
+        logger.error("Could not start the startup preflight: %s", exc)
     yield
 
 

@@ -23,7 +23,10 @@ Why spaCy directly instead of Microsoft Presidio's ``SpacyRecognizer``
 
 The spaCy models are loaded lazily and cached; if none of the configured
 models can be loaded the module logs a one-time warning and returns an empty
-list, so the app degrades gracefully to opf + deterministic recognizers.
+list. That degradation is a safety net, not an operating mode: it silently
+costs every person name written in caps, so :mod:`server.ner_models` downloads
+the models on first run and the startup preflight keeps the app unavailable
+until they are there.
 
 Language routing
     When more than one model is loaded, the analyzer splits the input into
@@ -54,7 +57,9 @@ import threading
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
+from server import ner_models
 from server.lexicon_es import (
     BIRTH_DATE_TRIGGERS,
     ENTITY_MARKERS,
@@ -73,16 +78,11 @@ from server.lexicon_es import (
 
 logger = logging.getLogger("privacy_filter.ner_es")
 
-# Model list resolution: PF_NER_MODELS wins; fall back to legacy PF_NER_MODEL;
-# fall back to the built-in default (Spanish + Catalan).
-_MODELS_ENV = os.environ.get("PF_NER_MODELS")
-_LEGACY_MODEL = os.environ.get("PF_NER_MODEL")
-if _MODELS_ENV:
-    _MODEL_NAMES = tuple(m.strip() for m in _MODELS_ENV.split(",") if m.strip())
-elif _LEGACY_MODEL:
-    _MODEL_NAMES = (_LEGACY_MODEL.strip(),)
-else:
-    _MODEL_NAMES = ("es_core_news_lg", "ca_core_news_lg")
+# Which models to load. Resolved in server.ner_models (PF_NER_MODELS, legacy
+# PF_NER_MODEL, then the built-in Spanish + Catalan default) because the
+# downloader and this loader have to agree on the list: two copies of it is how
+# a model ends up fetched but never loaded.
+_MODEL_NAMES = ner_models.MODEL_NAMES
 
 # ORG is off by default. Policy: a legal-entity name is what keeps a document
 # readable ("Agencia Tributaria", the bank, the counterparty), and redacting it
@@ -153,16 +153,23 @@ def _load() -> None:
             _loaded = True
             return
         for name in _MODEL_NAMES:
+            # Two ways a model can be present. The managed directory is what
+            # the app downloads and keeps up to date (server/ner_models.py);
+            # the bare name is a pip-installed model, which is how a
+            # development machine gets one via `python -m spacy download`.
+            # Managed wins so an upgrade the app installed is the one in use.
+            source: str | Path = name
+            if ner_models.is_installed(name):
+                source = ner_models.model_dir(name)
             try:
                 nlp = spacy.load(
-                    name,
+                    source,
                     disable=["parser", "attribute_ruler", "lemmatizer"],
                 )
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 logger.warning(
-                    "NER model %r not installed (%s). "
-                    "Install with 'python -m spacy download %s'.",
-                    name, exc, name,
+                    "NER model %r could not be loaded from %s (%s).",
+                    name, source, exc,
                 )
                 continue
             _nlps.append(nlp)
@@ -172,8 +179,9 @@ def _load() -> None:
             logger.info("Loaded NER model: %s (lang=%s)", name, lang or "?")
         if not _nlps:
             logger.warning(
-                "No NER models available; the app will run on opf + "
-                "deterministic recognizers only.",
+                "No NER models available; names written in caps will not be "
+                "detected. The startup preflight in server.inference is meant "
+                "to have installed them (server/ner_models.py).",
             )
         _loaded = True
 
@@ -182,6 +190,26 @@ def is_available() -> bool:
     """Return True when the NER layer will actually contribute spans."""
     _load()
     return bool(_nlps)
+
+
+def loaded_model_count() -> int:
+    """How many pipelines are loaded, without triggering a load."""
+    return len(_nlps)
+
+
+def reload() -> None:
+    """Drop the cached pipelines so the next call reloads them from disk.
+
+    Needed when the startup check installs a newer model version while the app
+    is already running: ``_loaded`` is otherwise a one-way latch and the
+    process would keep serving the version it opened at boot.
+    """
+    global _loaded
+    with _load_lock:
+        _nlps.clear()
+        _nlps_by_lang.clear()
+        _loaded = False
+    logger.info("NER pipelines dropped; they will reload on next use.")
 
 
 _MIN_BLOCK_LEN_FOR_DETECT = 40

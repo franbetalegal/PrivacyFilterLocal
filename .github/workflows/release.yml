@@ -136,8 +136,36 @@ jobs:
           path: PrivacyFilter-macos-arm64-*.tar.gz
           if-no-files-found: error
 
+  # Proves, on each platform we publish, that a shipped environment can find a
+  # person's name. Releases up to 2.6.3 could not: the spaCy models were only
+  # mentioned in a comment in requirements-server.txt, so nothing installed
+  # them and every name written in caps came back unredacted while DNIs and
+  # addresses were replaced — an output that looks anonymised and is not.
+  #
+  # It runs the real first-run path (server/ner_models downloads ~1.2 GB), which
+  # is why it lives here and not in tests.yml: the unit tests are offline and
+  # skip precisely when the models are absent, which is the broken state.
+  # torch is not installed on purpose — the NER layer does not need it, and the
+  # opf checkpoint is 2.7 GB we do not have to move to answer this question.
+  smoke:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: pip install -r requirements-server.txt
+      - name: Detect a name written in caps
+        run: python smoke_ner.py
+
   release:
-    needs: [version, windows, linux, macos]
+    needs: [version, windows, linux, macos, smoke]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

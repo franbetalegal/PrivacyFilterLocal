@@ -14,12 +14,21 @@ python-docx==1.2.0
 # layer are just left blank and reported in the warning.
 pytesseract==0.3.13
 Pillow==12.3.0
-# Iberian NER (adds recall on top of the primarily-English opf model).
-# After installing this you also need the models:
-#     python -m spacy download es_core_news_lg
-#     python -m spacy download ca_core_news_lg   # for Catalan documents
-# spaCy is imported lazily; if a model is missing the app degrades to whatever
-# models are available (Spanish only, Catalan only, or opf + deterministic).
+# Iberian NER (adds recall on top of the primarily-English opf model). This
+# installs the spaCy runtime only. The language models are NOT pinned here on
+# purpose: they are ~1.2 GB of data, and server/ner_models.py downloads them
+# into the app folder on first run, the same way the opf checkpoint is fetched.
+#
+# This comment used to say "you also need: python -m spacy download
+# es_core_news_lg". Nothing acted on it — not a launcher, not the Windows
+# build, not CI — so every release up to 2.6.3 ran without the models and left
+# every person name written in caps unredacted. The startup preflight in
+# server/inference.py now refuses to make the app available until they are
+# installed, and smoke_ner.py fails the release build if they cannot be.
+#
+# On a development machine `python -m spacy download es_core_news_lg` still
+# works: a pip-installed model counts as present, so nothing is re-downloaded,
+# and it is loaded as-is.
 spacy==3.8.13
 # Language detection so we run only the NER model matching each document's
 # language and avoid tagging Catalan common words as Spanish person names

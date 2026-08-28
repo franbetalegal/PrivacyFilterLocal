@@ -32,6 +32,10 @@ desktop.ini
 # Model cache
 .opf/
 
+# spaCy NER models, downloaded at runtime into the app folder (~1.2 GB).
+# See server/ner_models.py; PF_NER_DIR overrides the location.
+ner-models/
+
 # Temp files
 *.tmp
 *.temp

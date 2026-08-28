@@ -61,7 +61,9 @@ Grab the latest build from the
 3. It extracts the app into a **`PrivacyFilter`** subfolder next to the `.exe`
    and opens automatically in your browser.
 
-> The first run downloads the model (~2.7 GB); progress is shown in the app.
+> The first run downloads the detection models (~2.7 GB for the PII model plus
+> ~1.2 GB for the Spanish/Catalan name models); progress is shown in the app,
+> which stays on its preparing screen until every layer is in place.
 > SmartScreen may warn about the unsigned `.exe` the first time — choose
 > **More info → Run anyway**.
 
@@ -72,7 +74,9 @@ Grab the latest build from the
    macOS asks because the build is not signed with an Apple Developer ID;
    after the first launch it stops asking.
 3. Later on, just double-click `run.command`. The first run creates a local
-   virtualenv and downloads the model (~2.7 GB, progress shown in the app).
+   virtualenv and downloads the detection models (~2.7 GB for the PII model
+   plus ~1.2 GB for the Spanish/Catalan name models, progress shown in the
+   app).
 
 Requires macOS 12+ (Apple Silicon), Python 3.10+ (Homebrew:
 `brew install python`) and — for OCR of scanned PDFs — Tesseract
@@ -81,10 +85,15 @@ missing but still opens the app for text-layer documents.
 
 ### Linux (technical users)
 1. Download **`PrivacyFilter-linux-vX.Y.Z.tar.gz`** and extract it.
-2. Run `./run.sh`. The first run creates a local virtualenv and installs the
-   dependencies; later runs just start the app and open your browser.
+2. Run `./run.sh`. The first run creates a local virtualenv, installs the
+   dependencies and downloads the detection models (~2.7 GB for the PII model
+   plus ~1.2 GB for the Spanish/Catalan name models); later runs just start the
+   app and open your browser.
 
-Requires Python 3.10+ (`python3` and `python3-venv`).
+Requires Python 3.10+ (`python3` and `python3-venv`) and — for OCR of scanned
+PDFs — Tesseract (`sudo apt install tesseract-ocr tesseract-ocr-spa
+tesseract-ocr-cat`). The launcher warns if it is missing but still opens the
+app for text-layer documents.
 
 ### All platforms
 - **Stop**: the **Quit** button in the UI (the server keeps running if you only
@@ -93,8 +102,16 @@ Requires Python 3.10+ (`python3` and `python3-venv`).
   On Windows you can also run `start.bat` to see the server in a console. Logs live
   under `logs/privacy-filter.log` inside the app folder.
 
-Everything (model, caches, temp, logs) stays inside the app folder and the server
-binds to `127.0.0.1` only. Delete the folder to uninstall.
+Everything (models, caches, temp, logs) stays inside the app folder and the
+server binds to `127.0.0.1` only. Delete the folder to uninstall.
+
+**The app will not open until every detection layer is present.** The name
+models are what find a person written in caps — the form every Spanish tax and
+court document uses — so running without them returns documents that look
+anonymised and are not. Releases up to 2.6.3 did exactly that; see the 2.7.0
+entry in [CHANGELOG.md](CHANGELOG.md). The **Información** tab lists the state
+of each component, and the app reports a missing Tesseract there too (that one
+only affects scanned documents, so it does not block anything).
 
 ## Build the portable package
 
@@ -209,10 +226,31 @@ adds two local layers tuned for Spanish/Catalan legal documents:
 `server/pipeline.py` merges the three sources (deterministic > opf > NER on
 overlap) and applies the consistent pseudonymisation.
 
+### The NER models
+
+They are **not** a pip dependency and are not bundled in any build: they are
+~1.2 GB of data, so `server/ner_models.py` downloads them into the app folder
+on first run, exactly like the opf checkpoint, and validates each one by
+opening it before it replaces anything. On every start the app re-checks
+spaCy's own compatibility table (`spacy.about.__compatibility__`) and installs
+a newer compatible version if one has been published.
+
+The startup preflight (`server/inference.run_preflight`) keeps the app
+unavailable until they are installed, `/api/health` reports the state of every
+component, and `smoke_ner.py` fails a release build whose environment cannot
+detect a name written in caps. Before 2.7.0 none of that existed and the models
+were only mentioned in a comment in `requirements-server.txt`, so no build ever
+had them.
+
+On a development machine a pip-installed model is used as-is and nothing is
+re-downloaded, so `python -m spacy download es_core_news_lg` remains a valid
+setup.
+
 ### System dependencies (Linux server / dev machine)
 
-Beyond `pip install -r requirements-server.txt`, install the spaCy models and
-the Tesseract binary + language data:
+Beyond `pip install -r requirements-server.txt`, you can install the spaCy
+models yourself (optional — the app fetches them if you do not) and the
+Tesseract binary + language data:
 
 ```bash
 # spaCy Spanish + Catalan models (into the same venv)
@@ -224,15 +262,17 @@ sudo apt install tesseract-ocr tesseract-ocr-spa tesseract-ocr-cat   # Debian/Ub
 brew install tesseract tesseract-lang                                # macOS
 ```
 
-All of these are imported lazily: if a spaCy model or Tesseract is missing, the
-app keeps working with whatever layers are available (a warning is logged), so
-they're effectively optional but strongly recommended for Spanish/Catalan docs.
+Tesseract is imported lazily and stays optional: without it, pages with no text
+layer extract as nothing, which the UI now says out loud instead of reporting a
+document with no detections. The spaCy models are not optional — the app
+installs them itself and will not serve a document until they are in place.
 
 ### Configuration (environment variables)
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PF_NER_MODELS` | `es_core_news_lg,ca_core_news_lg` | spaCy models to load (comma-separated) |
+| `PF_NER_MODELS` | `es_core_news_lg,ca_core_news_lg` | spaCy models to load and keep installed (comma-separated) |
+| `PF_NER_DIR` | `<app folder>/ner-models` | Where the downloaded spaCy models live |
 | `PF_NER_LABELS` | `PER,LOC` | Entity types to keep from NER. Add `ORG` to redact company and institution names too — off by default because an entity name keeps the document readable and rarely protects a natural person |
 | `PF_REDACT_ALL_DATES` | `0` | Redact every date instead of only dates of birth. Off by default: an acquisition or transmission date is what a tax computation rests on |
 | `PF_OCR_LANG` | `spa+eng` | Tesseract languages (use `spa+cat+eng` for bilingual) |
@@ -317,6 +357,7 @@ PrivacyFilterLocal/
 │   ├── pipeline.py         # Merges opf + deterministic + NER; pseudonymisation
 │   ├── recognizers_es.py   # Spanish/Catalan deterministic recognizers + validators
 │   ├── ner_es.py           # spaCy NER, per-block language routing, FP filter
+│   ├── ner_models.py       # Downloads/validates/updates the spaCy models
 │   ├── concurrency.py      # Shared CPU-core budget (PF_RESERVED_CORES)
 │   ├── redaction.py        # Text/PDF/DOCX extraction & redaction entry points
 │   ├── pdf_ops.py          # PDF char→bbox map, offset redaction, parallel OCR
@@ -337,11 +378,19 @@ PrivacyFilterLocal/
 
 ## Updating
 
-- **Model**: the **Update model** button (Info tab) downloads the latest model.
+- **PII model**: the **Update model** button (Info tab) downloads the latest
+  model.
+- **NER models**: checked on every start and upgraded on their own when a newer
+  version compatible with the installed spaCy is published. The install is
+  staged and validated first, so a bad download never costs the working model.
 - **App**: the **Update app** banner installs the latest release in place. On
   macOS and Linux it downloads that platform's archive and unpacks it over the
-  install, keeping the model, caches and virtualenv; in a git checkout it pulls
-  instead. Windows installs are replaced by re-running the installer.
+  install, keeping the models, caches and virtualenv; in a git checkout it
+  pulls. Windows installs are replaced by re-running the installer, which
+  leaves the runtime folders (`model/`, `ner-models/`, `cache/`, `logs/`)
+  alone. Either way the pinned dependencies are reinstalled afterwards, and an
+  update whose reinstall fails is reported as failed rather than as a
+  successful update with a footnote.
 
 ## License
 
