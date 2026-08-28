@@ -5,6 +5,47 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.3] - 2026-08-28
+
+### Fixed
+- **Clicking a detection mode's name now selects it.** Only the radio circle
+  itself responded, so the mode looked stuck unless you hit a target a few
+  pixels wide. The cause was not the styling but a hardcoded `name="mode"`:
+  since a visited tab stays mounted, the Text and Files tabs can both be in the
+  DOM, and with no form to separate them all six radios formed a single group.
+  A browser allows one checked radio across a group while React forces one per
+  selector, so the DOM and the state drifted apart and the click looked ignored.
+  Each selector now gets its own group, the pill grew into its hit target
+  instead of being padded for its text alone, and the selected mode is marked
+  with a background and border rather than a hairline outline.
+
+- **The server now restarts itself after an app update.** The update installed,
+  the log said so, and nothing came back up. The restart spawned a child process
+  and killed the parent, but the detached-process flag only applies on Windows:
+  on macOS and Linux the child inherited the process group of the terminal that
+  launched the app, so the hangup raised by the parent's exit took it down too.
+  The child was also started before the parent released the port, and the port
+  fallback in the launcher never ran because uvicorn exits rather than raising
+  when it cannot bind.
+
+  The backend now replaces its own process image (`os.execv`), which keeps the
+  PID, the session and the launcher's window, orphans nothing, and frees the
+  listening socket so the new process binds the same port — the one the browser
+  already has open. It behaves the same under run.command, run.sh, a plain
+  `python -m server.main` and the Windows portable, so no launcher changed.
+
+  Note for anyone updating *from* 2.6.2: that jump still runs the old restart
+  code, so the app has to be closed and reopened by hand one last time. Updates
+  from 2.6.3 onwards restart on their own.
+
+- **The page reloads itself once the new server answers.** The banner used to
+  show the backend's English "Restarting in 2 seconds…" and then sit against a
+  server that was gone. `/api/health` now carries an instance id and the banner
+  waits for a *different* one before reloading: the outgoing process still
+  answers for a second or two, so polling for mere reachability would reload the
+  very version the update replaced. After sixty seconds it says so instead of
+  spinning.
+
 ## [2.6.2] - 2026-08-27
 
 ### Fixed
