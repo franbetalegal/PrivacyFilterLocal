@@ -442,13 +442,38 @@ function Add-Tesseract {
     }
     Write-OK "Language data: $($TESSDATA_LANGS -join ', ')"
 
-    # Prove it runs here rather than discovering it on a user's machine.
-    $probe = & (Join-Path $binDir "tesseract.exe") --list-langs 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    # Prove it runs here rather than discovering it on a user's machine, and
+    # prove it with the language data we just placed: a Tesseract built
+    # elsewhere has a compiled-in default tessdata path that does not exist on
+    # this machine, so without --tessdata-dir the probe fails for a reason that
+    # has nothing to do with the package. That is exactly what happened on the
+    # first 2.8.0 build, and it is the same trap the runtime avoids by passing
+    # the flag from PF_TESSDATA_DIR (see server/pdf_ops._tessdata_config).
+    #
+    # $ErrorActionPreference is relaxed around the call because it is "Stop"
+    # for the whole script, and under that setting anything a native command
+    # writes to stderr becomes a terminating error before $LASTEXITCODE can be
+    # read — the failure aborts the build instead of being reported.
+    $previousEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $probe = & (Join-Path $binDir "tesseract.exe") `
+                   --tessdata-dir $dataDir --list-langs 2>&1 | Out-String
+        $probeExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousEAP
+    }
+    if ($probeExit -ne 0) {
         Write-Fail "The bundled tesseract.exe does not run: $probe"
         return $false
     }
-    Write-OK "Bundled Tesseract runs"
+    foreach ($lang in $TESSDATA_LANGS) {
+        if ($probe -notmatch "(?m)^\s*$lang\s*$") {
+            Write-Fail "The bundled Tesseract does not offer '$lang': $probe"
+            return $false
+        }
+    }
+    Write-OK "Bundled Tesseract runs and offers $($TESSDATA_LANGS -join ', ')"
     return $true
 }
 
