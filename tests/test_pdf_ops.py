@@ -3,6 +3,7 @@
 Uses PyMuPDF's own writer to synthesize input PDFs on the fly, so no fixtures
 are required and the tests exercise the real extract → offsets → redact loop.
 """
+import os
 import sys
 from pathlib import Path
 
@@ -474,40 +475,80 @@ def _ocr_a_blank_page(monkeypatch, tmp_path: Path, data: dict, *, line_breaks: b
 # --- bundled language data -------------------------------------------------
 #
 # The builds ship Tesseract inside the app folder and point PF_TESSDATA_DIR at
-# its tessdata. Passing --tessdata-dir explicitly is the whole reason these
-# exist: TESSDATA_PREFIX meant different things in Tesseract 3 and 4, and
-# getting it wrong fails at OCR time on a user's machine, not here.
+# its tessdata. It reaches the binary through TESSDATA_PREFIX and never through
+# a --tessdata-dir argument: pytesseract splits its `config` string with
+# shlex in non-POSIX mode on Windows, which keeps the quotes inside the token,
+# and unquoted it would break on any install path containing a space. See
+# server.pdf_ops._apply_tessdata_env.
 
 
-def test_bundled_language_data_is_passed_to_tesseract(monkeypatch, tmp_path: Path):
+@pytest.fixture(autouse=True)
+def _isolate_tessdata_env():
+    """Keep TESSDATA_PREFIX from leaking between tests.
+
+    ``_apply_tessdata_env`` writes it into the real environment — it has to, it
+    is how the value reaches the tesseract subprocess — so monkeypatch cannot
+    undo it and the next test would inherit a bogus language directory.
+    """
+    previous = os.environ.get("TESSDATA_PREFIX")
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("TESSDATA_PREFIX", None)
+        else:
+            os.environ["TESSDATA_PREFIX"] = previous
+
+
+def test_bundled_language_data_reaches_tesseract(monkeypatch, tmp_path: Path):
     tessdata = tmp_path / "tessdata"
     tessdata.mkdir()
+    monkeypatch.setenv("PF_TESSDATA_DIR", str(tessdata))
+    monkeypatch.delenv("TESSDATA_PREFIX", raising=False)
+    fake = _FakeTesseract(_fake_ocr_data([("Hola", 1, 1, 1)]))
+
+    _ocr_a_blank_page(monkeypatch, tmp_path, {}, fake=fake)
+
+    assert os.environ["TESSDATA_PREFIX"] == str(tessdata)
+    assert fake.last_call["config"] == "", (
+        "the path must not travel as an argument: pytesseract's shlex handling "
+        "corrupts it on Windows"
+    )
+
+
+def test_a_path_with_spaces_survives(monkeypatch, tmp_path: Path):
+    """A Windows user unpacking onto their Desktop is the normal case."""
+    tessdata = tmp_path / "Privacy Filter" / "tessdata"
+    tessdata.mkdir(parents=True)
     monkeypatch.setenv("PF_TESSDATA_DIR", str(tessdata))
     fake = _FakeTesseract(_fake_ocr_data([("Hola", 1, 1, 1)]))
 
     _ocr_a_blank_page(monkeypatch, tmp_path, {}, fake=fake)
 
-    assert f'--tessdata-dir "{tessdata}"' == fake.last_call["config"]
+    assert os.environ["TESSDATA_PREFIX"] == str(tessdata)
 
 
 def test_no_language_data_override_leaves_tesseract_to_itself(monkeypatch, tmp_path: Path):
-    """A system install resolves its own data; we must not send an empty flag."""
+    """A system install resolves its own data; we must not redirect it."""
     monkeypatch.delenv("PF_TESSDATA_DIR", raising=False)
+    monkeypatch.delenv("TESSDATA_PREFIX", raising=False)
     fake = _FakeTesseract(_fake_ocr_data([("Hola", 1, 1, 1)]))
 
     _ocr_a_blank_page(monkeypatch, tmp_path, {}, fake=fake)
 
+    assert "TESSDATA_PREFIX" not in os.environ
     assert fake.last_call["config"] == ""
 
 
 def test_a_bad_language_data_path_is_ignored_rather_than_fatal(monkeypatch, tmp_path: Path):
     """Better a working OCR with the system data than none at all."""
     monkeypatch.setenv("PF_TESSDATA_DIR", str(tmp_path / "does-not-exist"))
+    monkeypatch.delenv("TESSDATA_PREFIX", raising=False)
     fake = _FakeTesseract(_fake_ocr_data([("Hola", 1, 1, 1)]))
 
     _ocr_a_blank_page(monkeypatch, tmp_path, {}, fake=fake)
 
-    assert fake.last_call["config"] == ""
+    assert "TESSDATA_PREFIX" not in os.environ
 
 
 def test_ocr_page_can_join_the_whole_page_as_one_line(monkeypatch, tmp_path: Path):

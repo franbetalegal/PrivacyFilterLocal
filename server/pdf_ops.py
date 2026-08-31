@@ -50,27 +50,41 @@ _MIN_OCR_PAGES_FOR_PARALLEL = 3
 _MIN_OCR_DPI = 150
 
 
-def _tessdata_config() -> str:
-    """``--tessdata-dir`` for the bundled language data, or an empty config.
+def _apply_tessdata_env() -> None:
+    """Point Tesseract at the bundled language data, via the environment.
 
-    The builds ship Tesseract inside the app folder and the launchers point
-    ``PF_TESSDATA_DIR`` at its ``tessdata``. Passing the path explicitly beats
-    setting ``TESSDATA_PREFIX``: that variable meant "the directory *containing*
-    tessdata" in Tesseract 3 and "the tessdata directory itself" from 4 on, and
-    guessing wrong fails at OCR time with an unhelpful error.
+    The builds ship Tesseract inside the app folder and the launchers set
+    ``PF_TESSDATA_DIR`` to its ``tessdata``. Nothing happens when that variable
+    is unset, which is the system-install case: Tesseract resolves its own data
+    as it always did.
 
-    Empty when the variable is unset or points nowhere, which is the
-    system-install case: Tesseract then resolves its own data as it always did.
+    Why the environment and not ``--tessdata-dir``: pytesseract's ``config`` is
+    a string it splits with ``shlex.split(config, posix=not_windows)``. On
+    Windows that runs in non-POSIX mode, which keeps quotes inside the token, so
+    a quoted path arrives at the binary complete with its quotation marks
+    (``"D:\\...\\tessdata"/spa.traineddata`` — measured, it is what broke the
+    first 2.8.0 build). Dropping the quotes is not a fix either: non-POSIX shlex
+    still splits on whitespace, so any install path containing a space — a
+    Windows user's Desktop, routinely — would break instead. There is no
+    spelling of that argument that survives both platforms.
+
+    ``TESSDATA_PREFIX`` has none of that problem: it is an environment variable,
+    so no argument quoting is involved and a path with spaces is just a path.
+    Its meaning did shift — the parent of ``tessdata`` in Tesseract 3, the
+    ``tessdata`` directory itself from 4 on — but the only thing that sets
+    ``PF_TESSDATA_DIR`` is our own launcher, pointing at our own bundled
+    Tesseract 5.
     """
     directory = os.environ.get("PF_TESSDATA_DIR", "").strip()
-    if directory and Path(directory).is_dir():
-        return f'--tessdata-dir "{directory}"'
-    if directory:
+    if not directory:
+        return
+    if not Path(directory).is_dir():
         logger.warning(
             "PF_TESSDATA_DIR=%r is not a directory; letting Tesseract find its "
             "own language data.", directory,
         )
-    return ""
+        return
+    os.environ["TESSDATA_PREFIX"] = directory
 
 
 def _ocr_line_breaks_enabled() -> bool:
@@ -234,6 +248,7 @@ def _ocr_page(page, page_idx: int, fitz_mod, *, ocr_threads: int = 1):
         dpi = _effective_dpi(page)
         lang = os.environ.get("PF_OCR_LANG", "spa+cat+eng")
         os.environ["OMP_THREAD_LIMIT"] = str(max(1, ocr_threads))
+        _apply_tessdata_env()
         # Grayscale, and hand the raw samples straight to PIL. Tesseract
         # converts to grayscale internally anyway, so rendering 3 channels
         # produces two thirds of the pixels for nothing; and going through
@@ -244,8 +259,7 @@ def _ocr_page(page, page_idx: int, fitz_mod, *, ocr_threads: int = 1):
         pix = page.get_pixmap(dpi=dpi, colorspace=fitz_mod.csGRAY)
         img = Image.frombytes("L", (pix.width, pix.height), pix.samples)
         data = pytesseract.image_to_data(
-            img, lang=lang, config=_tessdata_config(),
-            output_type=pytesseract.Output.DICT,
+            img, lang=lang, output_type=pytesseract.Output.DICT
         )
     except (pytesseract.TesseractNotFoundError, RuntimeError) as exc:
         logger.warning("OCR skipped on page %d: %s", page_idx, exc)
