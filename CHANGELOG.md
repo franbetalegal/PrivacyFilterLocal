@@ -18,10 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   All three builds now carry Tesseract — the binary plus `spa`, `cat` and `eng`
   from `tessdata_fast`, about 40 MB against the ~4 GB of models the app already
-  downloads. The launchers put it on `PATH` and pass its language data with
-  `--tessdata-dir`, which is version-proof in a way `TESSDATA_PREFIX` is not:
-  that variable meant "the directory containing tessdata" in Tesseract 3 and
-  "the tessdata directory" from 4 on.
+  downloads. The launchers put it on `PATH`, which is all both `pytesseract` and
+  the app's own component check need, and point `PF_TESSDATA_DIR` at its
+  language data, which the app exports as `TESSDATA_PREFIX` before calling it.
+
+  Not as a `--tessdata-dir` argument, which is what the first attempt did and
+  what broke the first build of this release on Windows: `pytesseract` splits
+  its `config` string with `shlex` in non-POSIX mode there, so a quoted path
+  arrives at the binary with its quotation marks attached, and an unquoted one
+  splits on any space in the install path — a Windows user's Desktop,
+  routinely. An environment variable has neither problem.
 
 - **macOS and Linux no longer need a Python on the machine.** Windows already
   shipped its own interpreter; the other two demanded Python 3.10+, built a

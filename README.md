@@ -279,7 +279,7 @@ installs them itself and will not serve a document until they are in place.
 | `PF_NER_LABELS` | `PER,LOC` | Entity types to keep from NER. Add `ORG` to redact company and institution names too — off by default because an entity name keeps the document readable and rarely protects a natural person |
 | `PF_REDACT_ALL_DATES` | `0` | Redact every date instead of only dates of birth. Off by default: an acquisition or transmission date is what a tax computation rests on |
 | `PF_OCR_LANG` | `spa+cat+eng` | Tesseract languages. The builds ship data for exactly these three |
-| `PF_TESSDATA_DIR` | *(set by the launchers)* | Language data for the bundled Tesseract, passed as `--tessdata-dir`. Unset means a system install resolves its own |
+| `PF_TESSDATA_DIR` | *(set by the launchers)* | Language data for the bundled Tesseract; the app exports it as `TESSDATA_PREFIX`. Unset means a system install resolves its own |
 | `PF_OCR_DPI` | `300` | Rasterisation DPI for scanned pages |
 | `PF_RESERVED_CORES` | `2` | CPU cores always kept free for the host |
 | `PF_MAX_WORKERS` | *(unset)* | Optional hard cap on worker processes/threads |
