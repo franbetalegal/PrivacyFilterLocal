@@ -23,6 +23,27 @@ jobs:
           pip install -e ./privacy-filter
           pip install -r requirements-server.txt
           pip install -r requirements-dev.txt
+      # build_portable.ps1 and the packaging scripts are the only files nothing
+      # executes until a release build runs on Windows, ten minutes in. pwsh is
+      # preinstalled on the Ubuntu runners, so parsing them here costs seconds
+      # and catches a typo before it costs a release.
+      - name: Parse the PowerShell packaging scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in @('build_portable.ps1', 'packaging/windows/make_exe.ps1')) {
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  (Resolve-Path $file), [ref]$null, [ref]$errors) | Out-Null
+              if ($errors.Count -gt 0) {
+                  Write-Host "::error file=$file::$($errors.Count) parse error(s)"
+                  $errors | ForEach-Object { Write-Host "  $($_.Extent.StartLineNumber): $($_.Message)" }
+                  $failed = $true
+              } else {
+                  Write-Host "OK $file"
+              }
+          }
+          if ($failed) { exit 1 }
       - name: Run tests
         # PF_FAST_MOE=0: server/moe_fast.py's "auto" mode times two CPU
         # implementations and caches the winner per host, but that cache lives

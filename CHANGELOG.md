@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build if the words do not come back or come back without coordinates. The
   smoke job now depends on the three build jobs, because testing anything other
   than the binary being published would prove nothing.
+- A PowerShell parse check in the test workflow. `build_portable.ps1` and
+  `make_exe.ps1` were the only files nothing executed until a release build was
+  ten minutes into a Windows runner; `pwsh` is already on the Ubuntu runners, so
+  parsing them on every push costs seconds.
 
 ### Fixed
 - The README said `PF_OCR_LANG` defaulted to `spa+eng`; the code has used

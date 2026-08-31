@@ -99,6 +99,33 @@ def test_windows_build_bundles_tesseract_language_data():
     assert '@("spa", "cat", "eng")' in body
 
 
+def test_windows_build_probes_tesseract_with_the_bundled_language_data():
+    """The first 2.8.0 build died here.
+
+    A Tesseract compiled on someone else's machine carries a compiled-in
+    tessdata path that does not exist on the build runner, so probing it
+    without --tessdata-dir fails for a reason that has nothing to do with the
+    package being assembled. Same trap the runtime avoids by passing the flag
+    from PF_TESSDATA_DIR.
+    """
+    body = _windows()
+    probe_start = body.index("--list-langs")
+    probe = body[probe_start - 300:probe_start + 100]
+    assert "--tessdata-dir" in probe, (
+        "the build-time probe must point Tesseract at the language data the "
+        "build just downloaded"
+    )
+
+
+def test_windows_build_probe_survives_output_on_stderr():
+    """$ErrorActionPreference is 'Stop' for the whole script, and under it
+    anything a native command writes to stderr becomes a terminating error
+    before $LASTEXITCODE can be read."""
+    body = _windows()
+    assert '$ErrorActionPreference = "Continue"' in body
+    assert "$previousEAP" in body
+
+
 def test_windows_tesseract_languages_match_the_ocr_default():
     from server import pdf_ops  # noqa: PLC0415 — kept local to the assertion
 
