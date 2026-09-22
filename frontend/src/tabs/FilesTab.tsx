@@ -248,9 +248,17 @@ export default function FilesTab() {
                     className="btn"
                     onClick={onApplySelection}
                     disabled={busy}
-                    title="Regenera el archivo aplicando solo las entidades marcadas."
+                    title="Aplica al archivo solo las entidades que ha marcado. No vuelve a ejecutar la detección, así que los cambios recientes en el diccionario NO se aplican por esta vía."
                   >
                     ↻ Regenerar con la selección ({keptSpans.length}/{spans.length})
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={onProcess}
+                    disabled={busy}
+                    title="Vuelve a ejecutar la detección sobre el mismo archivo. Úselo tras añadir o modificar términos del diccionario."
+                  >
+                    🔍 Volver a detectar (aplica el diccionario actual)
                   </button>
                   <label
                     className="save-example"
@@ -265,6 +273,13 @@ export default function FilesTab() {
                     Guardar como ejemplo de evaluación
                   </label>
                   {captureMsg && <p className="notice">{captureMsg}</p>}
+                  <p className="muted small">
+                    Si acaba de añadir o modificar términos en el
+                    diccionario, pulse «Volver a detectar» para aplicarlos.
+                    «Regenerar con la selección» solo re-empaqueta el archivo
+                    con las entidades ya marcadas y no vuelve a mirar el
+                    diccionario.
+                  </p>
                 </div>
               )}
             </>

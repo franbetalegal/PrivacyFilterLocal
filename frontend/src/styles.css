@@ -596,3 +596,11 @@ code {
 .banner.warning-banner code {
   font-size: 0.8rem;
 }
+
+/* Small helper text under review actions */
+.muted.small,
+p.small {
+  font-size: 0.82rem;
+  line-height: 1.4;
+  margin-top: 4px;
+}
