@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   redactFile,
   applyRedaction,
@@ -338,7 +338,7 @@ function QueueTable({ jobs }: { jobs: Job[] }) {
         <strong>{doneCount}/{jobs.length}</strong> archivo(s) completado(s)
         {anyError && <span className="error"> · errores en la cola</span>}
       </p>
-      <table className="dict-table">
+      <table className="dict-table queue-table">
         <thead>
           <tr>
             <th>Archivo</th>
@@ -350,43 +350,63 @@ function QueueTable({ jobs }: { jobs: Job[] }) {
         </thead>
         <tbody>
           {jobs.map((j, i) => (
-            <tr key={i}>
-              <td className="mono">{j.file.name}</td>
-              <td><StatusBadge status={j.status} /></td>
-              <td className="muted">
-                {j.status === "done" ? j.spans.length : "—"}
-              </td>
-              <td className="muted">
-                {j.elapsed != null ? `${j.elapsed.toFixed(1)}s` : "—"}
-              </td>
-              <td>
-                {j.downloadToken ? (
-                  <a
-                    className="btn small"
-                    href={downloadUrl(j.downloadToken)}
-                    download={j.downloadName ?? undefined}
-                  >
-                    ⬇ {j.downloadName ?? "archivo"}
-                  </a>
-                ) : j.status === "error" ? (
-                  <span className="error small">{j.error}</span>
-                ) : (
-                  <span className="muted">—</span>
-                )}
-                {j.markdownToken && (
-                  <>
-                    {" "}
+            // A single-file review row + a details row beneath it that lists
+            // the actual PII the pipeline replaced. The details row is
+            // rendered only when there are spans to show, so `<td colSpan>`
+            // stays honest about the table shape.
+            <Fragment key={i}>
+              <tr>
+                <td className="mono">{j.file.name}</td>
+                <td><StatusBadge status={j.status} /></td>
+                <td className="muted">
+                  {j.status === "done" ? j.spans.length : "—"}
+                </td>
+                <td className="muted">
+                  {j.elapsed != null ? `${j.elapsed.toFixed(1)}s` : "—"}
+                </td>
+                <td>
+                  {j.downloadToken ? (
                     <a
                       className="btn small"
-                      href={downloadUrl(j.markdownToken)}
-                      download={j.markdownName ?? undefined}
+                      href={downloadUrl(j.downloadToken)}
+                      download={j.downloadName ?? undefined}
                     >
-                      ⬇ .md
+                      ⬇ {j.downloadName ?? "archivo"}
                     </a>
-                  </>
-                )}
-              </td>
-            </tr>
+                  ) : j.status === "error" ? (
+                    <span className="error small">{j.error}</span>
+                  ) : (
+                    <span className="muted">—</span>
+                  )}
+                  {j.markdownToken && (
+                    <>
+                      {" "}
+                      <a
+                        className="btn small"
+                        href={downloadUrl(j.markdownToken)}
+                        download={j.markdownName ?? undefined}
+                      >
+                        ⬇ .md
+                      </a>
+                    </>
+                  )}
+                </td>
+              </tr>
+              {j.status === "done" && j.spans.length > 0 && (
+                <tr className="queue-spans-row">
+                  <td colSpan={5}>
+                    <SpanList spans={j.spans} />
+                  </td>
+                </tr>
+              )}
+              {j.warning && (
+                <tr className="queue-spans-row">
+                  <td colSpan={5}>
+                    <p className="warning">⚠ {j.warning}</p>
+                  </td>
+                </tr>
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>

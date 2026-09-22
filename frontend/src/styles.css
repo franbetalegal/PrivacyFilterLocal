@@ -611,3 +611,10 @@ p.small {
 .tag.status-done      { color: #4ade80; }
 .tag.status-error     { color: var(--error); }
 .tag.status-cancelled { color: var(--muted); }
+
+/* Queue rows: expandable details row under each file */
+.queue-table .queue-spans-row td {
+  background: rgba(255, 255, 255, 0.02);
+  padding: 6px 12px 10px;
+}
+.queue-table details.spans { margin: 0; }

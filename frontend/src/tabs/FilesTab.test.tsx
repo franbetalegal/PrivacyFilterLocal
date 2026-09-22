@@ -73,6 +73,30 @@ describe('FilesTab', () => {
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 
+  it('exposes a per-file collapsible list of what was anonymized', async () => {
+    vi.mocked(redactFile).mockImplementation(async (file: File) => fakeResult({
+      download_name: file.name.replace('.pdf', '_ANON.pdf'),
+      detected_spans: [
+        { start: 0, end: 5, label: 'NOMBRE', text: 'Ana', placeholder: '[NOMBRE_1]' },
+        { start: 6, end: 15, label: 'DNI',    text: '12345678Z', placeholder: '[DNI_1]' },
+      ],
+    }));
+
+    render(<FilesTab />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.upload(input, [pdf('a.pdf'), pdf('b.pdf')]);
+    await userEvent.click(screen.getByRole('button', { name: /Procesar cola/i }));
+
+    // Two <details> collapsibles, one per row, each with the summary text
+    // "Ver 2 entidad(es) detectada(s)".
+    const summaries = await screen.findAllByText(/Ver 2 entidad\(es\) detectada\(s\)/);
+    expect(summaries).toHaveLength(2);
+    // Expand the first and check both entity types appear.
+    await userEvent.click(summaries[0]);
+    expect(screen.getAllByText('NOMBRE')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('[DNI_1]')[0]).toBeInTheDocument();
+  });
+
   it('processes the queue sequentially and exposes a download per file', async () => {
     const order: string[] = [];
     vi.mocked(redactFile).mockImplementation(async (file: File) => {
