@@ -5,6 +5,31 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] - 2026-09-23
+
+### Added
+- **Multiple files at once.** The Files tab now accepts more than one upload
+  and, when it sees two or more, switches to a queue: each file is submitted
+  in turn to the same pipeline and gets its own status row and its own
+  download link. Nothing about the single-file review path changes, so the
+  human-in-the-loop flow is still there when you need it. Cancel stops the
+  file that is running and skips the rest.
+- **Per-file entity list in the queue.** Every completed row now carries a
+  collapsed "Ver N entidad(es) detectada(s)" that opens the same
+  type / original / replacement table used in single-file review. Before
+  this, the queue only showed a count, which was a regression against the
+  visibility the previous flow had.
+
+### Changed
+- **Dictionary changes now have an obvious way to take effect on an
+  already-analysed file.** A new "🔍 Volver a detectar (aplica el
+  diccionario actual)" button re-runs detection on the same file. The
+  previous "Regenerar con la selección" button is unchanged in what it does
+  (it re-packages the file with the entities the reviewer marked, without
+  re-running the pipeline), but its title and a short note under the review
+  actions now say so, so nobody assumes it will pick up terms they just
+  added to the dictionary.
+
 ## [2.8.0] - 2026-08-28
 
 ### Changed
