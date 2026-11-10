@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from server import concurrency
+from server import concurrency, jobs
 
 logger = logging.getLogger("privacy_filter.pdf_ops")
 
@@ -335,6 +335,9 @@ def _extract_page_range(pdf_path: str, start: int, end: int, fitz_mod, *, ocr_th
     try:
         results = []
         for page_idx in range(start, end):
+            # No-op inside OCR worker processes (nothing is bound there); in the
+            # sequential path it lets an abandoned request stop between pages.
+            jobs.check()
             page = doc[page_idx]
             text, coords = _extract_page(page, page_idx, fitz_mod, ocr_threads=ocr_threads)
             results.append((page_idx, text, coords))
@@ -448,19 +451,52 @@ def _get_pdf_pool(size: int) -> ProcessPoolExecutor:
         return _pdf_pool
 
 
-def _shutdown_pdf_pool() -> None:
+def _shutdown_pdf_pool(*, kill: bool = False) -> None:
     """Drop the page-extraction pool so the next call builds a fresh one.
 
     A broken pool stays broken: every later submit raises immediately. Without
     this, one failed document would push the whole process onto the sequential
     path for good.
+
+    It is also called after every parallel extraction. Each worker is a full
+    re-import of the app, a few hundred MB that used to stay resident for the
+    whole session on top of the model; on an 8 GB laptop that was part of what
+    pushed the process into an out-of-memory kill. Re-spawning per document
+    costs seconds against minutes of OCR.
+
+    ``kill`` terminates workers that are still OCRing, for a cancelled job:
+    ``shutdown`` alone lets them finish their page ranges first.
     """
     global _pdf_pool, _pdf_pool_size
     with _pdf_pool_lock:
-        if _pdf_pool is not None:
-            _pdf_pool.shutdown(wait=False)
+        pool = _pdf_pool
         _pdf_pool = None
         _pdf_pool_size = 0
+    if pool is None:
+        return
+    if kill:
+        # Private attribute, but the only handle on the worker processes; if a
+        # future Python renames it we just fall back to a graceful shutdown.
+        for proc in list(getattr(pool, "_processes", {}).values()):
+            try:
+                proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+    pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _wait_for_ranges(futures) -> list:
+    """Collect worker results in submission order, checking for cancellation."""
+    from concurrent.futures import FIRST_EXCEPTION, wait
+
+    pending = set(futures)
+    while pending:
+        jobs.check()
+        done, pending = wait(pending, timeout=1.0, return_when=FIRST_EXCEPTION)
+        for future in done:
+            if future.exception() is not None:
+                raise future.exception()
+    return [f.result() for f in futures]
 
 
 def extract_with_map(pdf_path: str) -> Optional[tuple[str, list[CharCoord]]]:
@@ -504,7 +540,7 @@ def extract_with_map(pdf_path: str) -> Optional[tuple[str, list[CharCoord]]]:
     if num_pages == 0:
         return "", []
 
-    workers = min(concurrency.worker_count(), num_pages)
+    workers = min(concurrency.ocr_worker_count(), num_pages)
     all_parts: list[str] = []
     all_coords: list[CharCoord] = []
 
@@ -536,7 +572,11 @@ def extract_with_map(pdf_path: str) -> Optional[tuple[str, list[CharCoord]]]:
                 pool.submit(_extract_page_range_worker, pdf_path, start, end)
                 for start, end in ranges
             ]
-            chunks = [f.result() for f in futures]
+            chunks = _wait_for_ranges(futures)
+            _shutdown_pdf_pool()
+        except jobs.Cancelled:
+            _shutdown_pdf_pool(kill=True)
+            raise
         except Exception as exc:  # noqa: BLE001
             # Parallel extraction is an optimisation; losing it must not lose
             # the document. A worker dying takes the whole pool down with it

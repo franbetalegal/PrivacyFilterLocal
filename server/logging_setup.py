@@ -39,12 +39,43 @@ def setup_file_logging() -> Path | None:
     handler.setFormatter(
         logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     )
+    # Root only. uvicorn runs with ``log_config=None``, so its loggers
+    # propagate to the root; attaching the handler to them as well wrote every
+    # access line to the file three times.
     logging.getLogger().addHandler(handler)
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-        logging.getLogger(name).addHandler(handler)
     _log_path = log_path
     return log_path
 
 
 def get_log_path() -> Path | None:
     return _log_path
+
+
+_crash_stream = None
+
+
+def enable_crash_log() -> Path | None:
+    """Write a native traceback to ``logs/crash.log`` if the process dies hard.
+
+    An out-of-memory kill inside torch or MKL, an access violation, an abort
+    from OpenMP: none of these go through Python's exception handling, so they
+    left nothing in ``privacy-filter.log``, and under ``pythonw`` there is no
+    console to have printed them either. ``faulthandler`` dumps every thread's
+    Python stack on those signals, which is usually enough to say which stage
+    was running when the process went down.
+    """
+    import faulthandler
+
+    global _crash_stream
+    log_dir = Path(os.environ.get("PF_LOG_DIR") or (PROJECT_DIR / "logs"))
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = log_dir / "crash.log"
+        # Kept open for the life of the process: faulthandler writes to the
+        # file descriptor at crash time, when nothing can be opened any more.
+        _crash_stream = open(path, "a", encoding="utf-8")
+        faulthandler.enable(file=_crash_stream, all_threads=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not enable the crash log: %s", exc)
+        return None
+    return path

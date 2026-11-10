@@ -61,6 +61,16 @@ def api_diagnostics() -> Response:
                 zf.writestr("privacy-filter.log", text[-200_000:])  # last ~200 KB
             except OSError:
                 pass
+            # The two files that explain a process that died without a Python
+            # traceback: native crash dumps, and whatever pythonw redirected.
+            for extra in ("crash.log", "server-stdout.log"):
+                path = log_path.parent / extra
+                try:
+                    if path.is_file() and path.stat().st_size:
+                        text = path.read_text(encoding="utf-8", errors="replace")
+                        zf.writestr(extra, text[-100_000:])
+                except OSError:
+                    pass
     buf.seek(0)
     return Response(
         content=buf.getvalue(),

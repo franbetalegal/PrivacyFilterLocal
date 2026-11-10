@@ -11,6 +11,7 @@ router registration, the static frontend mount and the CLI launcher.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import socket
@@ -30,6 +31,45 @@ from fastapi.staticfiles import StaticFiles
 
 from server.routes import core, dataset, diagnostics, dictionary, markdown, updates
 
+
+def _ensure_std_streams() -> None:
+    """Under pythonw.exe (no console) sys.stdout/stderr are None, which makes
+    uvicorn's stream logging crash on startup. Point them at a file so the
+    server runs windowless and any output is captured.
+
+    Must run before ``logging.basicConfig`` below: that call binds its handler
+    to whatever ``sys.stderr`` is at that moment, and binding it to None made
+    every log record under pythonw raise "--- Logging error ---" instead.
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        log_dir = Path(os.environ.get("PF_LOG_DIR") or (PROJECT_DIR / "logs"))
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stream = open(log_dir / "server-stdout.log", "a", buffering=1, encoding="utf-8")
+        if sys.stdout is None:
+            sys.stdout = stream
+        if sys.stderr is None:
+            sys.stderr = stream
+    except Exception:  # noqa: BLE001 — nowhere to report this yet
+        pass
+
+
+def _is_worker_process() -> bool:
+    """True inside an OCR worker spawned by :mod:`server.pdf_ops`.
+
+    Spawned workers re-run this module as ``__mp_main__``. They must not attach
+    their own rotating handler to the same log file: on Windows a file another
+    process holds open cannot be rotated, and once the log reached its size
+    limit the main process lost every later line.
+    """
+    import multiprocessing
+
+    return multiprocessing.parent_process() is not None
+
+
+_ensure_std_streams()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -37,7 +77,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("privacy_filter")
 
-logging_setup.setup_file_logging()
+if not _is_worker_process():
+    logging_setup.setup_file_logging()
+    logging_setup.enable_crash_log()
 
 FRONTEND_DIST = PROJECT_DIR / "frontend" / "dist"
 
@@ -50,11 +92,26 @@ async def lifespan(app: FastAPI):
     # per-component state are exposed via /api/health, and the UI stays on the
     # "Preparing" screen until everything is in place — an app that anonymises
     # with the name detector missing looks like it worked and did not.
+    from server import downloads
+
+    downloads.sweep_stale_temp_files()
     try:
         inference.start_background_download()
     except Exception as exc:  # noqa: BLE001
         logger.error("Could not start the startup preflight: %s", exc)
-    yield
+
+    async def expire_downloads() -> None:
+        # Redacted outputs nobody fetched must not stay on disk because no new
+        # download came along to trigger the sweep.
+        while True:
+            await asyncio.sleep(300)
+            downloads.sweep_expired()
+
+    sweeper = asyncio.create_task(expire_downloads())
+    try:
+        yield
+    finally:
+        sweeper.cancel()
 
 
 app = FastAPI(title="Privacy Filter - Local", version="2.0.0", lifespan=lifespan)
@@ -127,24 +184,6 @@ def _mount_frontend() -> None:
 
 
 _mount_frontend()
-
-
-def _ensure_std_streams() -> None:
-    """Under pythonw.exe (no console) sys.stdout/stderr are None, which makes
-    uvicorn's stream logging crash on startup. Point them at a file so the
-    server runs windowless and any output is captured."""
-    if sys.stdout is not None and sys.stderr is not None:
-        return
-    try:
-        log_dir = Path(os.environ.get("PF_LOG_DIR") or (PROJECT_DIR / "logs"))
-        log_dir.mkdir(parents=True, exist_ok=True)
-        stream = open(log_dir / "server-stdout.log", "a", buffering=1, encoding="utf-8")
-        if sys.stdout is None:
-            sys.stdout = stream
-        if sys.stderr is None:
-            sys.stderr = stream
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Could not set up std streams: %s", exc)
 
 
 def _port_is_free(host: str, port: int) -> bool:

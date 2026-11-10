@@ -46,8 +46,9 @@ def test_health_reports_every_detection_component():
     """
     components = client.get("/api/health").json()["components"]
 
-    assert set(components) == {"opf", "ner", "ocr"}
+    assert set(components) == {"opf", "ner", "ocr", "warmup"}
     assert isinstance(components["ner"]["available"], bool)
+    assert set(components["warmup"]) == {"warming", "warm", "error"}
     assert components["ner"]["models"], "no NER model is configured at all"
     for model in components["ner"]["models"]:
         assert model["name"]
