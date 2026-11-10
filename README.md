@@ -1,10 +1,11 @@
 # Privacy Filter - Local
 
 100% local PII detection and redaction, powered by OpenAI's Privacy Filter model.
-React (Vite) web interface served by a FastAPI backend — packaged as ready-to-run
-downloads for **Windows** (a self-extracting `.exe`), **macOS Apple Silicon**
-(a tarball with a double-clickable `run.command`) and **Linux** (a tarball with
-a `run.sh`). End users don't clone the repo or run a build step.
+React (Vite) web interface served by a FastAPI backend — packaged as a ready-to-run
+**Windows** download (a self-extracting `.exe`). End users don't clone the repo
+or run a build step. macOS and Linux run from a source checkout only (see
+[Develop](#develop)); release builds for them were dropped in 2.10.0
+because the app is only deployed on Windows.
 
 ## Features
 
@@ -45,8 +46,6 @@ a `run.sh`). End users don't clone the repo or run a build step.
 - Runs entirely offline (after the model is downloaded once).
 - **Portable on Windows**: a single folder with an embedded Python — no Python/Node
   install on the target machine, and nothing written outside the folder
-- **Runs on Linux too**: a small tarball + `run.sh` that creates a local virtualenv
-  on first run (technical users can also `pip install` from source)
 - First-run model download and any errors are shown **in the app** (no console)
 - Model updates from HuggingFace
 
@@ -69,34 +68,7 @@ Grab the latest build from the
 > SmartScreen may warn about the unsigned `.exe` the first time — choose
 > **More info → Run anyway**.
 
-### macOS (Apple Silicon)
-1. Download **`PrivacyFilter-macos-arm64-vX.Y.Z.tar.gz`** and double-click it
-   to extract.
-2. **First time only:** right-click on `run.command` → **Open** → **Open**.
-   macOS asks because the build is not signed with an Apple Developer ID;
-   after the first launch it stops asking.
-3. Later on, just double-click `run.command`. The first run creates a local
-   virtualenv and downloads the detection models (~2.7 GB for the PII model
-   plus ~1.2 GB for the Spanish/Catalan name models, progress shown in the
-   app).
-
-Requires macOS 12+ (Apple Silicon) and nothing else. The archive carries its
-own Python and its own Tesseract, so OCR of scanned PDFs works out of the box.
-
-### Linux (technical users)
-1. Download **`PrivacyFilter-linux-vX.Y.Z.tar.gz`** and extract it.
-2. Run `./run.sh`. The first run creates a local virtualenv, installs the
-   dependencies and downloads the detection models (~2.7 GB for the PII model
-   plus ~1.2 GB for the Spanish/Catalan name models); later runs just start the
-   app and open your browser.
-
-The archive carries its own Python and its own Tesseract, so nothing has to be
-installed first and OCR of scanned PDFs works out of the box. The bundled
-Tesseract is built on Ubuntu 24.04 and ships the libraries it links against; on
-a much older distribution it may refuse to load, and the launcher then says so
-and points at `apt install tesseract-ocr`.
-
-### All platforms
+### Using it
 - **Stop**: the **Quit** button in the UI (the server keeps running if you only
   close the browser tab).
 - **Something wrong?** Use **Diagnostics** in the UI to download a support bundle.
@@ -142,20 +114,10 @@ Wrap that folder into the single self-extracting `.exe`:
 
 (needs [NSIS](https://nsis.sourceforge.io): `choco install nsis`).
 
-For Linux, build the UI once (`corepack pnpm -C frontend run build`) and ship
-`server/`, `privacy-filter/`, `frontend/dist`, `app_update.py`, `model_update.py`,
-`requirements-server.txt`, `VERSION` and `packaging/linux/run.sh` together as a
-tarball.
-
-For macOS Apple Silicon, do the same but ship `packaging/macos/run.command`
-instead of `run.sh`. Building must be done on an actual arm64 Mac (or the
-`macos-14` GitHub runner) so the bundled path picks up the right Homebrew
-Python; `.github/workflows/release.yml` does exactly that.
-
 **Releases are automated:** pushing a `vX.Y.Z` tag triggers
-`.github/workflows/release.yml`, which builds the Windows `.exe`, the macOS
-arm64 tarball, and the Linux
-tarball and attaches them to the GitHub Release. Manual builds are only for local
+`.github/workflows/release.yml`, which builds the Windows `.exe`, runs the
+name and OCR smoke checks on Windows, and attaches the `.exe` to the GitHub
+Release. Manual builds are only for local
 testing.
 
 ## Develop
