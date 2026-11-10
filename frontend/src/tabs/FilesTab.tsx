@@ -58,7 +58,11 @@ export default function FilesTab() {
   const [captureMsg, setCaptureMsg] = useState<string | null>(null);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false); // true while any job is running
-  const [queueStopRequested, setQueueStopRequested] = useState(false);
+  // A ref, not state: the queue loop runs inside one async call and reads it
+  // on every iteration. As state, the loop saw the value captured when it
+  // started (always false), so Cancel stopped the current file and the queue
+  // carried on with the next one.
+  const stopQueueRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -83,7 +87,7 @@ export default function FilesTab() {
   }
 
   function onCancel() {
-    setQueueStopRequested(true);
+    stopQueueRef.current = true;
     abortRef.current?.abort();
   }
 
@@ -101,7 +105,7 @@ export default function FilesTab() {
   function onFilesChosen(files: FileList | null) {
     setGlobalError(null);
     setCaptureMsg(null);
-    setQueueStopRequested(false);
+    stopQueueRef.current = false;
     setJobs(files ? Array.from(files).map(newJob) : []);
   }
 
@@ -161,13 +165,13 @@ export default function FilesTab() {
   async function onProcessQueue() {
     if (!jobs.length) return;
     setBusy(true);
-    setQueueStopRequested(false);
+    stopQueueRef.current = false;
     try {
       // Backend serializes on a single-worker ThreadPoolExecutor anyway, so
       // sequential submission is not just simpler — it also lines up progress
       // with actual work, and one cancel stops the current file immediately.
       for (let i = 0; i < jobs.length; i++) {
-        if (queueStopRequested) break;
+        if (stopQueueRef.current) break;
         if (jobs[i].status === "done") continue;
         await runDetection(i);
       }

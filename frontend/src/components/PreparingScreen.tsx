@@ -78,6 +78,50 @@ export default function PreparingScreen({ health }: { health: Health | null }) {
     );
   }
 
+  const warmup = health?.components?.warmup;
+
+  // Models are on disk but could not be loaded or exercised.
+  if (warmup?.error) {
+    const memory = warmup.error === "memory";
+    return (
+      <div className="prepare">
+        <h2 className="error">No se pudieron cargar los modelos de detección</h2>
+        <p className="muted">
+          {memory
+            ? "El equipo no tiene memoria libre suficiente. Cierre otras " +
+              "aplicaciones (navegadores con muchas pestañas, Outlook, Teams) y " +
+              "vuelva a abrir la aplicación. Se necesitan unos 6 GB libres."
+            : warmup.error.startsWith("vocabulary")
+              ? "No se pudo descargar un archivo que el modelo necesita la " +
+                "primera vez. Compruebe la conexión a internet (o el proxy de " +
+                "la red) y vuelva a abrir la aplicación."
+              : "Ha ocurrido un error al cargar los modelos. Vuelva a abrir la " +
+                "aplicación; si se repite, descargue el diagnóstico y envíelo " +
+                "a soporte."}
+        </p>
+        <a className="btn primary" href={DIAGNOSTICS_URL} download>
+          ⬇ Descargar diagnóstico
+        </a>
+      </div>
+    );
+  }
+
+  // Everything is downloaded; loading it into memory and running it once.
+  if (warmup?.warming || (health && !warmup?.warm && !health.downloading)) {
+    return (
+      <div className="prepare">
+        <div className="processing-row">
+          <span className="spinner" aria-hidden="true" />
+          <span>Cargando los modelos de detección en memoria…</span>
+        </div>
+        <p className="muted">
+          Suele tardar entre 30 segundos y 2 minutos. Se hace al abrir la
+          aplicación para que el primer documento no tenga que esperar.
+        </p>
+      </div>
+    );
+  }
+
   // Backend not reachable yet (still starting).
   return (
     <div className="prepare">

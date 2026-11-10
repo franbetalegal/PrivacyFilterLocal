@@ -45,6 +45,11 @@ export default function App() {
   const [version, setVersion] = useState<string>("");
   const [health, setHealth] = useState<Health | null>(null);
   const [quitting, setQuitting] = useState(false);
+  // Once the app has been usable, a server problem must not swap the whole UI
+  // for the "Preparing" screen: that would unmount the tabs and throw away the
+  // user's files and review. A banner says what happened instead.
+  const [everReady, setEverReady] = useState(false);
+  const [serverLost, setServerLost] = useState(false);
 
   useEffect(() => {
     getVersion()
@@ -52,25 +57,37 @@ export default function App() {
       .catch(() => setVersion("desconocida"));
   }, []);
 
-  // Poll health until the backend is ready (model not downloading / no error).
+  // Poll health for the whole session. Fast while preparing; slower once ready,
+  // which is how a server that died mid-session gets noticed. It used to stop
+  // at "ready", and the only symptom of a dead server was the browser's raw
+  // "Failed to fetch" on the next action.
   useEffect(() => {
     let active = true;
     let timer: number | undefined;
+    let failures = 0;
+    let wasReady = false;
 
     async function poll() {
       try {
         const h = await getHealth();
         if (!active) return;
+        failures = 0;
         setHealth(h);
-        // Keep polling while the server says it is not ready: the preflight
-        // downloads the model and the NER models one after the other, and the
-        // NER stage is not visible in the old `downloading` flag.
-        if (!isReady(h)) {
-          timer = window.setTimeout(poll, 1500);
+        setServerLost(false);
+        if (isReady(h)) {
+          wasReady = true;
+          setEverReady(true);
         }
+        timer = window.setTimeout(poll, isReady(h) ? 5000 : 1500);
       } catch {
         if (!active) return;
-        setHealth(null); // server not reachable yet
+        failures += 1;
+        // One miss can be a busy moment; two in a row is a server that is gone.
+        if (wasReady) {
+          if (failures >= 2) setServerLost(true);
+        } else {
+          setHealth(null); // server not reachable yet (still starting)
+        }
         timer = window.setTimeout(poll, 1500);
       }
     }
@@ -101,7 +118,7 @@ export default function App() {
     );
   }
 
-  if (!isReady(health)) {
+  if (!everReady && !isReady(health)) {
     return (
       <div className="app">
         <PreparingScreen health={health} />
@@ -111,6 +128,20 @@ export default function App() {
 
   return (
     <div className="app">
+      {serverLost ? (
+        <div className="server-banner error-banner" role="alert">
+          <strong>Se ha perdido la conexión con el servidor local.</strong>{" "}
+          Puede que se haya cerrado o que el equipo se haya quedado sin memoria.
+          Si no se recupera solo en unos segundos, vuelva a abrir la aplicación.
+          Los documentos que estaban en proceso tendrán que enviarse de nuevo.
+        </div>
+      ) : !isReady(health) ? (
+        <div className="server-banner" role="status">
+          <span className="spinner" aria-hidden="true" /> El servidor se ha
+          reiniciado y está cargando de nuevo los modelos. Espere a que
+          desaparezca este aviso antes de procesar otro documento.
+        </div>
+      ) : null}
       <UpdateBanner />
       <ComponentWarnings health={health} />
 

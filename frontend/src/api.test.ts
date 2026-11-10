@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { MODES, MODE_LABEL, downloadUrl, getVersion, isAbort } from "./api";
+import {
+  MODES,
+  MODE_LABEL,
+  SERVER_UNREACHABLE_MESSAGE,
+  ServerUnreachableError,
+  downloadUrl,
+  getVersion,
+  isAbort,
+} from "./api";
 
 describe("isAbort", () => {
   it("recognizes a fetch AbortError", () => {
@@ -54,5 +62,27 @@ describe("getVersion", () => {
       }),
     );
     await expect(getVersion()).rejects.toThrow("model not loaded");
+  });
+});
+
+describe("network failures", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("replaces the browser's 'Failed to fetch' with an explanation", async () => {
+    // What Chrome and Edge throw when the server process is gone.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    await expect(getVersion()).rejects.toBeInstanceOf(ServerUnreachableError);
+    await expect(getVersion()).rejects.toThrow(SERVER_UNREACHABLE_MESSAGE);
+  });
+
+  it("keeps a user cancellation recognisable as an abort", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new DOMException("aborted", "AbortError")),
+    );
+    const err = await getVersion().catch((e: unknown) => e);
+    expect(isAbort(err)).toBe(true);
   });
 });
