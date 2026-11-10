@@ -5,6 +5,41 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.0] - 2026-11-10
+
+### Fixed
+- **The first document no longer crashes a fresh install.** A new Windows
+  install failed its first anonymisation with the browser's bare "Failed to
+  fetch". The app called itself ready once the model files were on disk, and
+  the first document then did all the heavy lifting inside the user's request:
+  downloading the tokenizer vocabulary (with no timeout, so it hung forever
+  behind a proxy), a CPU benchmark, loading 2.8 GB of weights and both spaCy
+  pipelines. On an 8 GB laptop that could kill the process. All of it now
+  happens at startup behind a "Cargando los modelos de detección en memoria…"
+  screen, and the app only reports ready once one real anonymisation has run.
+  A failure there is explained on that screen (not enough memory, download
+  blocked) instead of surfacing later.
+- **Cancel actually stops the work.** An abandoned document used to keep the
+  server busy for minutes, and every following file waited behind it. Work now
+  stops between pages and between model chunks as soon as the browser goes
+  away. The queue's Cancel button also stops the whole queue, not only the file
+  that was running.
+- **A lost server is explained.** Network failures show a Spanish message with
+  what to do, the app keeps checking the server after startup, and a banner
+  appears if it stops answering or restarts, without discarding the files and
+  reviews in the tabs.
+
+### Changed
+- OCR worker processes are closed after each document and their number is
+  capped by free memory, not only by CPU cores.
+- A native crash (out of memory, access violation) is written to
+  `logs/crash.log`, which the diagnostics bundle now includes together with
+  `server-stdout.log`.
+- Temp files a crashed run left behind, including raw originals, are deleted
+  at startup; unclaimed downloads expire on a timer.
+- Log lines are no longer written three times, and the Windows build no longer
+  logs a "Logging error" per line.
+
 ## [2.9.0] - 2026-09-23
 
 ### Added
