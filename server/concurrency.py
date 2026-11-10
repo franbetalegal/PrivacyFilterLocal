@@ -36,6 +36,71 @@ def worker_count() -> int:
     return budget
 
 
+# Resident cost of one OCR worker process. Each one is a spawn that re-imports
+# the app; measured at a few hundred MB, rounded up so the estimate errs on the
+# side of fewer workers.
+_OCR_WORKER_BYTES = 600 * 1024 * 1024
+# Memory left untouched for the OS and whatever else the user has open.
+_MEMORY_HEADROOM_BYTES = 1536 * 1024 * 1024
+
+
+def available_memory_bytes() -> int | None:
+    """Physical memory available right now, or None when it cannot be read.
+
+    Standard library only: Windows through ``GlobalMemoryStatusEx``, Linux
+    through ``/proc/meminfo``. macOS exposes no cheap "available" figure, so it
+    reports None and the caller keeps the CPU-based budget.
+    """
+    import sys
+
+    if sys.platform == "win32":
+        import ctypes
+
+        class _MemoryStatus(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = _MemoryStatus()
+        status.dwLength = ctypes.sizeof(_MemoryStatus)
+        try:
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.ullAvailPhys)
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def ocr_worker_count() -> int:
+    """How many OCR worker processes fit in both the CPU and memory budgets.
+
+    The CPU budget alone sized the pool for the cores, and on an 8 GB laptop
+    with the models loaded six re-imported workers did not fit.
+    """
+    budget = worker_count()
+    available = available_memory_bytes()
+    if available is None:
+        return budget
+    by_memory = (available - _MEMORY_HEADROOM_BYTES) // _OCR_WORKER_BYTES
+    return max(1, min(budget, int(by_memory)))
+
+
 def _reserved_cores() -> int:
     raw = os.environ.get("PF_RESERVED_CORES")
     if raw is None:

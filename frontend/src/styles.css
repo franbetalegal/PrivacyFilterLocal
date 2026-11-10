@@ -618,3 +618,21 @@ p.small {
   padding: 6px 12px 10px;
 }
 .queue-table details.spans { margin: 0; }
+
+/* Server connection banner (lost / restarting) */
+.server-banner {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: rgba(79, 140, 255, 0.12);
+  border: 1px solid rgba(79, 140, 255, 0.5);
+  line-height: 1.45;
+}
+.server-banner.error-banner {
+  background: rgba(255, 107, 107, 0.12);
+  border-color: var(--error);
+}

@@ -689,7 +689,7 @@ def test_a_broken_pool_is_dropped_so_the_next_document_retries_parallel(monkeypa
     shutdown_called = []
 
     class _Pool:
-        def shutdown(self, wait=True):
+        def shutdown(self, wait=True, cancel_futures=False):
             shutdown_called.append(wait)
 
     monkeypatch.setattr(pdf_ops, "_pdf_pool", _Pool())

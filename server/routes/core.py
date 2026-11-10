@@ -6,13 +6,16 @@ verification and the optional Markdown export all happen here.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import shutil
 import tempfile
+import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,7 +24,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from server import downloads, inference, redaction
+from server import downloads, inference, jobs, redaction
 from server import messages
 
 logger = logging.getLogger("privacy_filter")
@@ -59,6 +62,34 @@ class _SpanFromClient:
     text: str
     placeholder: str
     label: str = ""
+
+
+@asynccontextmanager
+async def _cancel_on_disconnect(request: Request):
+    """Yield an event that is set as soon as the client goes away.
+
+    Passed to every stage on the inference pool so an abandoned request stops
+    at the next page or chunk instead of holding the single worker for minutes
+    while the user's next file waits behind it (see :mod:`server.jobs`).
+    """
+    event = threading.Event()
+
+    async def watch() -> None:
+        while True:
+            if await request.is_disconnected():
+                logger.info("Client went away on %s; cancelling its job",
+                            request.url.path)
+                event.set()
+                return
+            await asyncio.sleep(1.0)
+
+    task = asyncio.create_task(watch())
+    token = jobs.request_event.set(event)
+    try:
+        yield event
+    finally:
+        jobs.request_event.reset(token)
+        task.cancel()
 
 
 def _copy_to_temp(input_path: str, ext: str) -> str:
@@ -177,14 +208,18 @@ def api_health() -> dict:
 
 
 @router.post("/api/redact")
-async def api_redact(req: RedactRequest) -> dict:
+async def api_redact(req: RedactRequest, request: Request) -> dict:
     """Detect and redact PII in a text string."""
     text = req.text or ""
     if not text.strip():
         return {"redacted_text": "", "detected_spans": [], "elapsed": 0.0,
                 "empty": True, "mode": req.mode}
     start = time.time()
-    result = await inference.redact(text, mode=req.mode)
+    async with _cancel_on_disconnect(request):
+        try:
+            result = await inference.redact(text, mode=req.mode)
+        except jobs.Cancelled:
+            return {"cancelled": True}
     elapsed = time.time() - start
     payload = result.to_dict()
     # ``to_dict`` carries opf's own English prose in "warning". Replace it with
@@ -205,6 +240,21 @@ async def api_redact_file(
     file: UploadFile = File(...),
     mode: str = "balanced",
     also_markdown: str = Form("false"),
+) -> dict:
+    """Detect PII in an uploaded file; see :func:`_redact_file`."""
+    async with _cancel_on_disconnect(request):
+        try:
+            return await _redact_file(request, file, mode, also_markdown)
+        except jobs.Cancelled:
+            logger.info("redact-file cancelled; work stopped early")
+            return {"cancelled": True}
+
+
+async def _redact_file(
+    request: Request,
+    file: UploadFile,
+    mode: str,
+    also_markdown: str,
 ) -> dict:
     """Detect PII in an uploaded file.
 
@@ -397,6 +447,24 @@ async def api_redact_file_apply(
     spans_json: str = Form(...),
     save_example: str = Form("false"),
     also_markdown: str = Form("false"),
+) -> dict:
+    """Re-apply a curated span list; see :func:`_redact_file_apply`."""
+    async with _cancel_on_disconnect(request):
+        try:
+            return await _redact_file_apply(
+                request, file, spans_json, save_example, also_markdown
+            )
+        except jobs.Cancelled:
+            logger.info("redact-file/apply cancelled; work stopped early")
+            return {"cancelled": True}
+
+
+async def _redact_file_apply(
+    request: Request,
+    file: UploadFile,
+    spans_json: str,
+    save_example: str,
+    also_markdown: str,
 ) -> dict:
     """Re-apply a user-curated span list to a re-uploaded document.
 

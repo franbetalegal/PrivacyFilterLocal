@@ -97,6 +97,35 @@ describe('FilesTab', () => {
     expect(screen.getAllByText('[DNI_1]')[0]).toBeInTheDocument();
   });
 
+  it('Cancel stops the whole queue, not just the file that is running', async () => {
+    // Reported bug: the stop flag was React state read inside the async loop,
+    // so the loop saw the value from when it started and kept going.
+    const started: string[] = [];
+    vi.mocked(redactFile).mockImplementation(
+      (file: File, _mode, signal?: AbortSignal) => {
+        started.push(file.name);
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError')),
+          );
+        });
+      },
+    );
+
+    render(<FilesTab />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.upload(input, [pdf('a.pdf'), pdf('b.pdf'), pdf('c.pdf')]);
+    await userEvent.click(screen.getByRole('button', { name: /Procesar cola/i }));
+    await waitFor(() => expect(started).toEqual(['a.pdf']));
+
+    await userEvent.click(screen.getByRole('button', { name: /Cancelar/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Procesar cola/i })).toBeEnabled(),
+    );
+    expect(started).toEqual(['a.pdf']);
+  });
+
   it('processes the queue sequentially and exposes a download per file', async () => {
     const order: string[] = [];
     vi.mocked(redactFile).mockImplementation(async (file: File) => {

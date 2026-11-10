@@ -16,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Optional
 
+from server import jobs
+
 logger = logging.getLogger("privacy_filter.inference")
 
 _model = None
@@ -47,6 +49,22 @@ def calibration_path_for(mode: str) -> Optional[str]:
 
 # Lightweight state for the /api/health endpoint.
 _state = {"loaded": False, "loading": False, "device": None}
+
+# Warm-up: everything the first anonymisation would otherwise pay for inside
+# the user's own request — the tokenizer vocabulary download, the MoE
+# calibration benchmark, the real weight load (opf maps its 2.8 GB lazily on the
+# first forward pass) and both spaCy pipelines. On an 8 GB laptop that burst
+# was enough to kill the process mid-request, which the browser reports only
+# as "Failed to fetch". Doing it here moves the wait to the "Preparing" screen
+# and turns any failure into a message the UI can show.
+_warm_state: dict = {"warming": False, "warm": False, "error": None}
+
+# Short, name-and-ID-bearing sentence so every layer (opf, recognizers, both
+# NER pipelines) actually runs during the warm-up.
+_WARMUP_TEXT = (
+    "Comparece D. Juan García López, con DNI 12345678Z, vecino de Barcelona. "
+    "Compareix la senyora Maria Puig i Ferrer."
+)
 
 # First-run model download progress (surfaced in the web UI instead of a console).
 _dl_state = {"downloading": False, "pct": 0, "error": None}
@@ -226,6 +244,7 @@ def reset_model() -> None:
     with _model_lock:
         _model = None
         _state["loaded"] = False
+        _warm_state["warm"] = False
 
 
 def _download_progress(message, pct) -> None:
@@ -356,15 +375,58 @@ def refresh_ner_models() -> None:
         ner_es.reload()
 
 
+def warm_up() -> None:
+    """Blocking: load everything and run one tiny anonymisation.
+
+    Only attempted once the downloads succeeded. Failures land in
+    ``_warm_state["error"]`` for the UI rather than raising, because the caller
+    is the startup preflight.
+    """
+    import time as _t
+
+    from server import vocab
+
+    if _warm_state["warm"]:
+        return
+    if _dl_state["error"] or _ner_state["error"]:
+        return
+    _warm_state["warming"] = True
+    _warm_state["error"] = None
+    t0 = _t.time()
+    try:
+        try:
+            vocab.ensure_present()
+        except Exception as exc:  # noqa: BLE001
+            _warm_state["error"] = f"vocabulary: {exc}"
+            logger.error("Could not obtain the tokenizer vocabulary: %s", exc)
+            return
+        try:
+            _redact_sync(_WARMUP_TEXT, DEFAULT_MODE)
+        except MemoryError:
+            _warm_state["error"] = "memory"
+            logger.error("Not enough memory to load the detection models.")
+            return
+        except Exception as exc:  # noqa: BLE001
+            _warm_state["error"] = f"{type(exc).__name__}: {exc}"
+            logger.error("Warm-up failed: %s", exc, exc_info=True)
+            return
+        _warm_state["warm"] = True
+        logger.info("Warm-up done in %.1fs; ready to anonymise.", _t.time() - t0)
+    finally:
+        _warm_state["warming"] = False
+
+
 def run_preflight() -> None:
     """Blocking: get every detection component in place, in order.
 
     Order matters: the opf checkpoint first because it is the larger download
-    and the one the UI already explains, then the NER models, then the version
-    check. All three report into the state the health endpoint serves.
+    and the one the UI already explains, then the NER models, then loading and
+    exercising all of it once, and only then the version check, which may
+    download a newer NER model and must not hold up the first document.
     """
     ensure_model_ready()
     ensure_ner_models_ready()
+    warm_up()
     refresh_ner_models()
 
 
@@ -434,6 +496,7 @@ def components() -> dict:
         },
         "ner": ner,
         "ocr": ocr_status(),
+        "warmup": dict(_warm_state),
     }
 
 
@@ -453,6 +516,10 @@ def status() -> dict:
         and not parts["ner"]["installing"]
         and parts["opf"]["error"] is None
         and parts["ner"]["error"] is None
+        # Present on disk is not enough: "ready" used to be claimed before a
+        # single byte of the model was in memory, and the first document paid
+        # for the load and could kill the process doing it.
+        and parts["warmup"]["warm"]
     )
     return {
         "model_loaded": _state["loaded"],
@@ -500,6 +567,7 @@ def _opf_redact_chunked(model, text: str, decode_options):
     warning: str | None = None
     per_chunk_times: list[float] = []
     for ch in chunks:
+        jobs.check()
         t = _t.time()
         r = model.redact(ch.text, decode=decode_options)
         per_chunk_times.append(_t.time() - t)
@@ -560,9 +628,11 @@ def _redact_sync(text: str, mode: str = DEFAULT_MODE):
         DecodeOptions(viterbi_calibration_path=calib) if calib is not None else None
     )
 
+    jobs.check()
     t0 = _t.time()
     opf_result = _opf_redact_chunked(model, text, decode_options)
     t_opf = _t.time() - t0
+    jobs.check()
     t1 = _t.time()
     result = pipeline.merge_and_redact(text, opf_result, mode=mode)
     t_pipeline = _t.time() - t1
@@ -573,20 +643,45 @@ def _redact_sync(text: str, mode: str = DEFAULT_MODE):
     return result
 
 
-async def redact(text: str, mode: str = DEFAULT_MODE):
+def _bound(cancel: Optional[threading.Event], func: Callable, *args):
+    """Run ``func`` on the worker with ``cancel`` visible to :func:`jobs.check`.
+
+    Also refuses to start at all when the job was cancelled while it sat in the
+    queue, which is the cheap and common case.
+    """
+    jobs.bind(cancel)
+    try:
+        jobs.check()
+        return func(*args)
+    finally:
+        jobs.bind(None)
+
+
+async def redact(
+    text: str,
+    mode: str = DEFAULT_MODE,
+    cancel: Optional[threading.Event] = None,
+):
     """Run redaction off the event loop, serialized via the single-worker pool.
 
     ``mode`` picks the precision/recall operating point (``conservative``,
     ``balanced``, ``aggressive``); unknown values fall back to ``balanced``.
     Returns the ``RedactionResult`` from ``OPF.redact`` (post-pipeline).
+    ``cancel`` lets the caller abandon the job; see :mod:`server.jobs`.
     """
     if mode not in _MODE_TO_CALIBRATION:
         mode = DEFAULT_MODE
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_executor, _redact_sync, text, mode)
+    cancel = cancel or jobs.request_event.get()
+    return await loop.run_in_executor(
+        _executor, _bound, cancel, _redact_sync, text, mode
+    )
 
 
-async def run_blocking(func: Callable, *args):
+async def run_blocking(
+    func: Callable, *args, cancel: Optional[threading.Event] = None
+):
     """Run an arbitrary blocking callable on the inference thread pool."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_executor, func, *args)
+    cancel = cancel or jobs.request_event.get()
+    return await loop.run_in_executor(_executor, _bound, cancel, func, *args)

@@ -94,6 +94,37 @@ export interface UpdatesInfo {
   model: ModelUpdateInfo;
 }
 
+/** Texto que ve el usuario cuando el navegador no consigue ni hablar con el
+ *  servidor local. Sustituye al «Failed to fetch» del navegador, que no dice
+ *  qué ha pasado ni qué hacer. */
+export const SERVER_UNREACHABLE_MESSAGE =
+  "No se ha podido contactar con el servidor local de la aplicación. Puede " +
+  "que se haya cerrado o que el equipo se haya quedado sin memoria con un " +
+  "documento muy grande. Recargue la página; si sigue sin responder, vuelva " +
+  "a abrir la aplicación y, si el problema se repite, descargue el " +
+  "diagnóstico desde la cabecera y envíelo a soporte.";
+
+/** Raised when the request never reached the server (or the connection died
+ *  mid-request). Distinct from an HTTP error, which the server did answer. */
+export class ServerUnreachableError extends Error {
+  constructor() {
+    super(SERVER_UNREACHABLE_MESSAGE);
+    this.name = "ServerUnreachableError";
+  }
+}
+
+/** `fetch` that turns a network-level failure into a readable error.
+ *  A cancellation (AbortError) is passed through untouched so callers can
+ *  still tell "the user pressed Cancel" apart from "the server is gone". */
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (e) {
+    if (isAbort(e)) throw e;
+    throw new ServerUnreachableError();
+  }
+}
+
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   if (!res.ok) {
     // The backend answers with {code, params}; the Spanish sentence is built
@@ -111,7 +142,7 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
 }
 
 export async function getVersion(): Promise<string> {
-  const data = await jsonOrThrow<{ version: string }>(await fetch("/api/version"));
+  const data = await jsonOrThrow<{ version: string }>(await apiFetch("/api/version"));
   return data.version;
 }
 
@@ -151,6 +182,8 @@ export interface HealthComponents {
   };
   /** Tesseract. Only affects scanned documents, so it does not gate the app. */
   ocr: { available: boolean; binary: string | null };
+  /** Models loaded in memory and exercised once. The app is not ready before. */
+  warmup?: { warming: boolean; warm: boolean; error: string | null };
 }
 
 export interface Health {
@@ -171,7 +204,7 @@ export interface Health {
 }
 
 export async function getHealth(): Promise<Health> {
-  return jsonOrThrow(await fetch("/api/health"));
+  return jsonOrThrow(await apiFetch("/api/health"));
 }
 
 /** Whether the app may be used. Trusts the server's own verdict; the older
@@ -185,7 +218,7 @@ export function isReady(health: Health | null): boolean {
 export const DIAGNOSTICS_URL = "/api/diagnostics";
 
 export async function shutdown(): Promise<void> {
-  await fetch("/api/shutdown", { method: "POST" });
+  await apiFetch("/api/shutdown", { method: "POST" });
 }
 
 export async function redactText(
@@ -194,7 +227,7 @@ export async function redactText(
   signal?: AbortSignal,
 ): Promise<RedactTextResult> {
   return jsonOrThrow(
-    await fetch("/api/redact", {
+    await apiFetch("/api/redact", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, mode }),
@@ -214,7 +247,7 @@ export async function redactFile(
   form.append("mode", mode);
   if (alsoMarkdown) form.append("also_markdown", "true");
   return jsonOrThrow(
-    await fetch("/api/redact-file", { method: "POST", body: form, signal }),
+    await apiFetch("/api/redact-file", { method: "POST", body: form, signal }),
   );
 }
 
@@ -235,7 +268,7 @@ export async function applyRedaction(
   form.append("save_example", saveExample ? "true" : "false");
   if (alsoMarkdown) form.append("also_markdown", "true");
   return jsonOrThrow(
-    await fetch("/api/redact-file/apply", {
+    await apiFetch("/api/redact-file/apply", {
       method: "POST",
       body: form,
       signal,
@@ -277,14 +310,14 @@ export interface ImportResult {
 }
 
 export async function getDictionary(): Promise<DictionaryInfo> {
-  return jsonOrThrow(await fetch("/api/dictionary"));
+  return jsonOrThrow(await apiFetch("/api/dictionary"));
 }
 
 export async function addDictEntry(
   entry: Omit<DictEntry, "id">,
 ): Promise<DictEntry> {
   return jsonOrThrow(
-    await fetch("/api/dictionary", {
+    await apiFetch("/api/dictionary", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(entry),
@@ -297,7 +330,7 @@ export async function updateDictEntry(
   patch: Partial<Omit<DictEntry, "id">>,
 ): Promise<DictEntry> {
   return jsonOrThrow(
-    await fetch(`/api/dictionary/${id}`, {
+    await apiFetch(`/api/dictionary/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
@@ -306,14 +339,14 @@ export async function updateDictEntry(
 }
 
 export async function deleteDictEntry(id: string): Promise<void> {
-  await jsonOrThrow(await fetch(`/api/dictionary/${id}`, { method: "DELETE" }));
+  await jsonOrThrow(await apiFetch(`/api/dictionary/${id}`, { method: "DELETE" }));
 }
 
 export async function importDictionary(
   terms: unknown[],
 ): Promise<ImportResult> {
   return jsonOrThrow(
-    await fetch("/api/dictionary/import", {
+    await apiFetch("/api/dictionary/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ terms }),
@@ -342,7 +375,7 @@ export async function convertToMarkdown(
   const form = new FormData();
   form.append("file", file);
   return jsonOrThrow(
-    await fetch("/api/markdown", { method: "POST", body: form, signal }),
+    await apiFetch("/api/markdown", { method: "POST", body: form, signal }),
   );
 }
 
@@ -390,7 +423,7 @@ export async function captureExample(
   spans: DetectedSpan[],
 ): Promise<{ added: boolean; total: number; reason?: string }> {
   return jsonOrThrow(
-    await fetch("/api/dataset/capture", {
+    await apiFetch("/api/dataset/capture", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, spans }),
@@ -399,12 +432,12 @@ export async function captureExample(
 }
 
 export async function getDatasetStats(): Promise<DatasetStats> {
-  return jsonOrThrow(await fetch("/api/dataset/stats"));
+  return jsonOrThrow(await apiFetch("/api/dataset/stats"));
 }
 
 export async function evaluateDataset(mode: Mode): Promise<EvalReport> {
   return jsonOrThrow(
-    await fetch("/api/dataset/evaluate", {
+    await apiFetch("/api/dataset/evaluate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode }),
@@ -413,7 +446,7 @@ export async function evaluateDataset(mode: Mode): Promise<EvalReport> {
 }
 
 export async function getUpdates(): Promise<UpdatesInfo> {
-  return jsonOrThrow(await fetch("/api/updates"));
+  return jsonOrThrow(await apiFetch("/api/updates"));
 }
 
 export async function installAppUpdate(): Promise<{
@@ -422,9 +455,9 @@ export async function installAppUpdate(): Promise<{
   /** The backend is about to restart itself; wait for a new Health.instance. */
   restarting?: boolean;
 }> {
-  return jsonOrThrow(await fetch("/api/updates/app", { method: "POST" }));
+  return jsonOrThrow(await apiFetch("/api/updates/app", { method: "POST" }));
 }
 
 export async function installModelUpdate(): Promise<{ status: string; message: string }> {
-  return jsonOrThrow(await fetch("/api/updates/model", { method: "POST" }));
+  return jsonOrThrow(await apiFetch("/api/updates/model", { method: "POST" }));
 }
