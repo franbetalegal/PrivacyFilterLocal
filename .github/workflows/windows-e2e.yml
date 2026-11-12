@@ -1,0 +1,85 @@
+name: Windows end-to-end
+
+# Installs a published Windows build on a clean runner exactly as a user would
+# (the real .exe, its own Python and Tesseract, first-run model downloads) and
+# anonymises a synthetic scanned PDF through the running app, measuring the
+# peak memory of the whole process tree. Nothing before this ever loaded the
+# model or ran a real document on Windows before a release went out.
+#
+# Runners have 16 GB; the office machines have 8. The memory budget is what
+# stands in for them: set it and a build that would not fit fails here.
+#
+# The repository is public, and so are these logs and artifacts. Only the
+# synthetic documents in smoke_e2e.py may go through this workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Published version to test, without leading v (e.g. 2.10.0)"
+        required: true
+      budget_gb:
+        description: "Fail if the app's peak memory exceeds this many GB (0 = report only)"
+        required: false
+        default: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the test driver's own dependencies
+        run: pip install psutil requests pymupdf pillow
+
+      - name: Download the published installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dl | Out-Null
+          gh release download "v${{ inputs.version }}" --pattern "PrivacyFilter-Setup-*.exe" --dir dl
+          Get-ChildItem dl | Format-Table Name, Length
+
+      - name: Run the installer the way a user does
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dl -Filter "PrivacyFilter-Setup-*.exe" | Select-Object -First 1
+          # /S is NSIS's silent mode: same extraction, same launch of the
+          # hidden launcher (.vbs -> launch.bat -> pythonw -m server.main).
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "/S" -PassThru -Wait
+          Write-Host "installer exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { exit $p.ExitCode }
+          Get-ChildItem dl\PrivacyFilter | Format-Table Name
+
+      - name: Anonymise a synthetic scanned PDF through the installed app
+        shell: pwsh
+        run: python smoke_e2e.py --port 7860 --budget-gb ${{ inputs.budget_gb }} --out e2e-report.json
+
+      - name: Report
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path e2e-report.json) { Get-Content e2e-report.json }
+          foreach ($f in "privacy-filter.log", "crash.log", "server-stdout.log") {
+            $path = "dl\PrivacyFilter\logs\$f"
+            if (Test-Path $path) {
+              Write-Host "===== $f (tail) ====="
+              Get-Content $path -Tail 80
+            }
+          }
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: e2e-logs-v${{ inputs.version }}
+          path: |
+            e2e-report.json
+            dl/PrivacyFilter/logs/
+          if-no-files-found: ignore
