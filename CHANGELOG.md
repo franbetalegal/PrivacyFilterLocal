@@ -5,6 +5,21 @@ All notable changes to Privacy Filter Local will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.1] - 2026-11-13
+
+### Changed
+- **Faster install on office PCs.** The installer used to write about 35,000
+  files, and on a machine with real-time antivirus (or a OneDrive-synced
+  folder) each one is scanned as it lands, so unpacking could take around 20
+  minutes before any model was downloaded. The libraries' own test suites,
+  C/C++ headers, import libraries and type stubs are no longer shipped: about
+  half the files, none of which the app ever loads.
+- **Every release is installed and tested on Windows before it is published.**
+  The release pipeline installs the .exe it just built on a clean Windows
+  machine, waits for the models, and anonymises a synthetic scanned PDF through
+  the running app, reporting install time, file count and peak memory. A build
+  that fails there is not published.
+
 ## [2.10.0] - 2026-11-10
 
 ### Fixed
