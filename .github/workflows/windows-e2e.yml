@@ -53,7 +53,11 @@ jobs:
           $exe = Get-ChildItem dl -Filter "PrivacyFilter-Setup-*.exe" | Select-Object -First 1
           # /S is NSIS's silent mode: same extraction, same launch of the
           # hidden launcher (.vbs -> launch.bat -> pythonw -m server.main).
-          $p = Start-Process -FilePath $exe.FullName -ArgumentList "/S" -PassThru -Wait
+          # Not -Wait: that waits for every descendant too, and the installer
+          # leaves the app server and a browser running, so it never returns.
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "/S" -PassThru
+          $null = $p.Handle  # cache the handle so ExitCode is readable later
+          $p.WaitForExit()
           Write-Host "installer exit code: $($p.ExitCode)"
           if ($p.ExitCode -ne 0) { exit $p.ExitCode }
           Get-ChildItem dl\PrivacyFilter | Format-Table Name
