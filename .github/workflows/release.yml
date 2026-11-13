@@ -17,6 +17,10 @@ on:
       version:
         description: "Version without leading v (e.g. 2.4.0)"
         required: true
+      publish:
+        description: "Publish the release (off = build and test only)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -116,8 +120,17 @@ jobs:
           $env:PF_TESSDATA_DIR = Join-Path $tess "tessdata"
           python smoke_ocr.py
 
+  # Installs the .exe just built on a clean Windows runner and anonymises a
+  # synthetic scanned PDF through it, before anything is published.
+  e2e:
+    needs: windows
+    uses: ./.github/workflows/windows-e2e.yml
+    with:
+      artifact: windows-exe
+
   release:
-    needs: [version, windows, smoke]
+    needs: [version, windows, smoke, e2e]
+    if: github.event_name == 'push' || inputs.publish
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

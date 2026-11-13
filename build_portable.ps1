@@ -230,6 +230,52 @@ function Install-Dependencies {
 }
 
 # ============================================================
+#  PHASE 3b: TRIM THE PAYLOAD
+# ============================================================
+# Install time on an office PC is dominated by the number of files, not their
+# size: real-time antivirus (and OneDrive, when the target folder is synced)
+# handles every file as it is written. A stock install is ~35,000 files, and
+# roughly half of them are never loaded by the app: the libraries' own test
+# suites, C/C++ headers and import libraries that only matter when compiling
+# extensions, and type stubs. Only those are removed; every .py, .pyc, native
+# module and .dist-info stays, so imports, plugin discovery and pip still work.
+
+function Remove-UnneededFiles {
+    Write-Step "PHASE 3b: TRIMMING THE PAYLOAD"
+
+    $site = Join-Path $PYTHON_DIR "Lib\site-packages"
+    if (-not (Test-Path $site)) { Write-Warn "No site-packages to trim"; return $true }
+
+    $before = (Get-ChildItem $site -Recurse -File -Force).Count
+
+    # Whole directories: test suites, plus headers and CMake files for building
+    # extensions against torch / numpy.
+    $dirs = @(Get-ChildItem $site -Recurse -Directory -Force -Filter "tests")
+    foreach ($rel in @("torch\include", "torch\share", "numpy\_core\include",
+                       "numpy\_core\lib", "numpy\f2py\src")) {
+        $p = Join-Path $site $rel
+        if (Test-Path $p) { $dirs += Get-Item $p }
+    }
+    foreach ($d in $dirs) {
+        if (Test-Path $d.FullName) { Remove-Item -Recurse -Force $d.FullName }
+    }
+
+    # Single files: headers, import libraries (.lib, link time only), type stubs.
+    Get-ChildItem $site -Recurse -File -Force -Include "*.h", "*.hpp", "*.hh", "*.cuh", "*.lib", "*.pyi" |
+        Remove-Item -Force
+
+    # Directories the removals above left empty.
+    Get-ChildItem $site -Recurse -Directory -Force |
+        Sort-Object { $_.FullName.Length } -Descending |
+        Where-Object { -not (Get-ChildItem $_.FullName -Force) } |
+        Remove-Item -Force
+
+    $after = (Get-ChildItem $site -Recurse -File -Force).Count
+    Write-OK "site-packages: $before -> $after files"
+    return $true
+}
+
+# ============================================================
 #  PHASE 4: RESOLVE REACT FRONTEND (built dist; needs Node only to (re)build)
 # ============================================================
 
@@ -684,6 +730,7 @@ function Main {
     if (-not (Get-PythonEmbeddable))      { Write-Host "`n[FATAL] Python embeddable." -ForegroundColor Red; exit 1 }
     if (-not (Enable-PythonSitePackages)) { Write-Host "`n[FATAL] Configure Python." -ForegroundColor Red; exit 1 }
     if (-not (Install-Dependencies))      { Write-Host "`n[FATAL] Install deps." -ForegroundColor Red; exit 1 }
+    if (-not (Remove-UnneededFiles))      { Write-Host "`n[FATAL] Trim payload." -ForegroundColor Red; exit 1 }
     if (-not (Resolve-Frontend))          { Write-Host "`n[FATAL] Resolve frontend." -ForegroundColor Red; exit 1 }
     if (-not (Copy-ApplicationCode))      { Write-Host "`n[FATAL] Copy app code." -ForegroundColor Red; exit 1 }
     if (-not (Get-ModelOffline))          { Write-Host "`n[FATAL] Pre-download model." -ForegroundColor Red; exit 1 }

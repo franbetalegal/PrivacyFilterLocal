@@ -1,13 +1,19 @@
 name: Windows end-to-end
 
-# Installs a published Windows build on a clean runner exactly as a user would
-# (the real .exe, its own Python and Tesseract, first-run model downloads) and
-# anonymises a synthetic scanned PDF through the running app, measuring the
-# peak memory of the whole process tree. Nothing before this ever loaded the
-# model or ran a real document on Windows before a release went out.
+# Installs a Windows build on a clean runner exactly as a user would (the real
+# .exe, its own Python and Tesseract, first-run model downloads) and anonymises
+# a synthetic scanned PDF through the running app, measuring the peak memory of
+# the whole process tree, the install time and the number of files installed.
+#
+# Two ways in:
+#   - by hand (workflow_dispatch) against an already published version;
+#   - from release.yml (workflow_call) against the .exe that run just built,
+#     before anything is published.
 #
 # Runners have 16 GB; the office machines have 8. The memory budget is what
 # stands in for them: set it and a build that would not fit fails here.
+# Runners also have no real-time antivirus or OneDrive, so the install time
+# here is a floor; the file count is what predicts the time on an office PC.
 #
 # The repository is public, and so are these logs and artifacts. Only the
 # synthetic documents in smoke_e2e.py may go through this workflow.
@@ -20,6 +26,16 @@ on:
         required: true
       budget_gb:
         description: "Fail if the app's peak memory exceeds this many GB (0 = report only)"
+        required: false
+        default: "0"
+  workflow_call:
+    inputs:
+      artifact:
+        description: "Name of an artifact of the calling run that holds the installer"
+        type: string
+        required: true
+      budget_gb:
+        type: string
         required: false
         default: "0"
 
@@ -38,7 +54,14 @@ jobs:
       - name: Install the test driver's own dependencies
         run: pip install psutil requests pymupdf pillow
 
-      - name: Download the published installer
+      - name: Get the installer from this run
+        if: inputs.artifact != ''
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ inputs.artifact }}
+          path: dl
+      - name: Get the published installer
+        if: inputs.artifact == ''
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -55,12 +78,21 @@ jobs:
           # hidden launcher (.vbs -> launch.bat -> pythonw -m server.main).
           # Not -Wait: that waits for every descendant too, and the installer
           # leaves the app server and a browser running, so it never returns.
+          $t = [Diagnostics.Stopwatch]::StartNew()
           $p = Start-Process -FilePath $exe.FullName -ArgumentList "/S" -PassThru
           $null = $p.Handle  # cache the handle so ExitCode is readable later
           $p.WaitForExit()
+          $t.Stop()
           Write-Host "installer exit code: $($p.ExitCode)"
           if ($p.ExitCode -ne 0) { exit $p.ExitCode }
-          Get-ChildItem dl\PrivacyFilter | Format-Table Name
+          $files = (Get-ChildItem dl\PrivacyFilter -Recurse -File -Force).Count
+          $mb = [math]::Round((Get-ChildItem dl\PrivacyFilter -Recurse -File -Force |
+                Measure-Object Length -Sum).Sum / 1MB)
+          Write-Host "install: $([math]::Round($t.Elapsed.TotalSeconds, 1)) s, $files files, $mb MB, installer $([math]::Round($exe.Length / 1MB)) MB"
+          @{ install_seconds = [math]::Round($t.Elapsed.TotalSeconds, 1)
+             installed_files = $files; installed_mb = $mb
+             installer_mb = [math]::Round($exe.Length / 1MB) } |
+            ConvertTo-Json | Set-Content install-stats.json
 
       - name: Anonymise a synthetic scanned PDF through the installed app
         shell: pwsh
@@ -70,7 +102,9 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          if (Test-Path e2e-report.json) { Get-Content e2e-report.json }
+          foreach ($f in "install-stats.json", "e2e-report.json") {
+            if (Test-Path $f) { Get-Content $f }
+          }
           foreach ($f in "privacy-filter.log", "crash.log", "server-stdout.log") {
             $path = "dl\PrivacyFilter\logs\$f"
             if (Test-Path $path) {
@@ -82,8 +116,9 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: e2e-logs-v${{ inputs.version }}
+          name: e2e-logs-${{ inputs.version || github.run_id }}
           path: |
+            install-stats.json
             e2e-report.json
             dl/PrivacyFilter/logs/
           if-no-files-found: ignore
